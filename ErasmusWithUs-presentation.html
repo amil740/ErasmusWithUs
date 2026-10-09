@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="az">
+<head>
+  <meta charset="utf-8">
+  <title>ErasmusWithUs | Layihə təqdimatı</title>
+  <style>
+    @page { size: 13.333in 7.5in; margin: 0; }
+    :root { --ink: #143436; --muted: #607775; --teal: #0d6a68; --mint: #dcefe9; --coral: #f26f52; --gold: #e6b85c; --paper: #f8f5ed; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #dfe7e2; color: var(--ink); font-family: Georgia, 'Times New Roman', serif; }
+    .slide { width: 13.333in; height: 7.5in; padding: .62in .78in; position: relative; overflow: hidden; page-break-after: always; break-after: page; background: var(--paper); }
+    .slide:last-child { page-break-after: auto; break-after: auto; }
+    .slide::after { content: ''; position: absolute; width: 2.2in; height: 2.2in; right: -.6in; bottom: -.75in; border-radius: 50%; background: var(--mint); opacity: .8; }
+    .number { position: absolute; right: .78in; top: .55in; color: var(--coral); font: 700 11px Arial, sans-serif; letter-spacing: .18em; }
+    .eyebrow { color: var(--teal); font: 700 11px Arial, sans-serif; letter-spacing: .17em; text-transform: uppercase; }
+    h1 { max-width: 8.6in; margin: .28in 0 .18in; font-size: 49px; line-height: .99; letter-spacing: -.04em; font-weight: 700; }
+    h1 em, h2 em { color: var(--coral); font-style: italic; font-weight: 400; }
+    h2 { margin: .18in 0 .14in; font-size: 31px; line-height: 1.05; letter-spacing: -.035em; }
+    h3 { margin: 0 0 7px; font: 700 14px Arial, sans-serif; }
+    p { margin: 0; color: var(--muted); font: 15px/1.45 Arial, sans-serif; }
+    .lead { max-width: 7.3in; font-size: 18px; line-height: 1.42; }
+    .rule { width: 1.1in; height: 4px; margin: .35in 0; background: var(--coral); }
+    .cover { display: flex; flex-direction: column; justify-content: center; background: var(--teal); color: #f8f5ed; }
+    .cover::before { content: ''; position: absolute; width: 5.8in; height: 5.8in; right: -1.1in; top: -1.4in; border: 1px solid rgba(255,255,255,.25); border-radius: 50%; box-shadow: 0 0 0 35px rgba(255,255,255,.05), 0 0 0 70px rgba(255,255,255,.04); }
+    .cover .eyebrow, .cover p { color: #bfe1d8; }
+    .cover h1 { max-width: 8in; font-size: 62px; }
+    .cover .tag { position: absolute; left: .78in; bottom: .66in; font: 12px Arial, sans-serif; letter-spacing: .09em; }
+    .two-col { display: grid; grid-template-columns: 1.05fr .95fr; gap: .55in; align-items: center; height: 5.8in; }
+    .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: .35in; }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: .28in; }
+    .card { padding: 18px; min-height: 1.2in; border: 1px solid #c9dcd5; border-radius: 15px; background: rgba(255,255,255,.58); }
+    .card strong { display: block; margin-bottom: 7px; font: 700 22px Arial, sans-serif; color: var(--teal); }
+    .card span, li { color: var(--muted); font: 12px/1.42 Arial, sans-serif; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    li { margin: 5px 0; }
+    .flow { display: flex; gap: 10px; align-items: stretch; margin-top: .35in; }
+    .step { flex: 1; padding: 17px 14px; background: var(--mint); border-radius: 14px; }
+    .step b { display: grid; place-items: center; width: 27px; height: 27px; margin-bottom: 14px; border-radius: 50%; background: var(--teal); color: white; font: 700 12px Arial, sans-serif; }
+    .step strong { display: block; margin-bottom: 7px; font: 700 14px Arial, sans-serif; }
+    .step small { color: var(--muted); font: 11px/1.4 Arial, sans-serif; }
+    .metric { display: flex; align-items: baseline; gap: 10px; padding: 17px 0; border-bottom: 1px solid #c9dcd5; }
+    .metric strong { min-width: 1.2in; color: var(--teal); font: 700 32px Arial, sans-serif; }
+    .metric span { color: var(--muted); font: 13px Arial, sans-serif; }
+    .quote { margin-top: .35in; padding: 22px 25px; border-left: 5px solid var(--coral); background: #fff7e5; }
+    .quote p { color: var(--ink); font-family: Georgia, serif; font-size: 21px; }
+    .quote small { display: block; margin-top: 10px; color: var(--muted); font: 11px Arial, sans-serif; }
+    .footer { position: absolute; bottom: .45in; left: .78in; color: #8ca19c; font: 10px Arial, sans-serif; }
+    .pill { display: inline-block; margin: 4px 4px 0 0; padding: 7px 10px; border-radius: 99px; background: var(--mint); color: var(--teal); font: 700 10px Arial, sans-serif; }
+    .closing { display: flex; flex-direction: column; justify-content: center; background: var(--coral); color: white; }
+    .closing h1 { max-width: 9in; }
+    .closing p { max-width: 6.5in; color: #fff2ed; }
+    .closing .rule { background: white; }
+    @media screen { .slide { margin: 18px auto; box-shadow: 0 8px 30px rgba(20,52,54,.12); } }
+  </style>
+</head>
+<body>
+  <section class="slide cover">
+    <div class="eyebrow">ErasmusWithUs / Layihə təqdimatı</div>
+    <h1>Erasmus seçimini<br><em>təsadüfdən plana.</em></h1>
+    <div class="rule"></div>
+    <p class="lead">Tələbənin ixtisasına, GPA-sına, büdcəsinə və həyat tərzinə uyğun universitet və şəhər seçməsinə kömək edən ağıllı Erasmus kəşf platforması.</p>
+    <div class="tag">2026 / 27 exchange catalogue · 36 universities · 26 European countries</div>
+    <span class="number">01</span>
+  </section>
+
+  <section class="slide">
+    <span class="number">02</span>
+    <div class="eyebrow">Problem / imkan</div>
+    <h2>Student needs more than a university name.</h2>
+    <p class="lead">Erasmus seçimi yalnız “hansı universitet yaxşıdır?” sualı deyil. Tələbə eyni anda şəhəri, xərcləri, uyğun ixtisası, sənədləri, deadline-ı və yaşayış yerini anlamalıdır.</p>
+    <div class="three">
+      <div class="card"><strong>Çox məlumat</strong><span>Rəsmi səhifələr, dağınıq deadline-lar və fərqli müraciət qaydaları.</span></div>
+      <div class="card"><strong>Gizli xərc</strong><span>Təqaüd rəqəmi təkbaşına kifayət etmir. Kirayə və gündəlik xərclər əsas qərardır.</span></div>
+      <div class="card"><strong>Şəxsi uyğunluq</strong><span>Bir tələbə üçün ideal şəhər digəri üçün GPA, dil və büdcə baxımından uyğun olmaya bilər.</span></div>
+    </div>
+    <div class="quote"><p>“Bu universitet mənim ixtisasıma uyğundur, amma orada real olaraq yaşaya biləcəyəm?”</p><small>ErasmusWithUs bu sualı qərarın mərkəzinə gətirir.</small></div>
+    <div class="footer">ErasmusWithUs / From discovery to a realistic decision</div>
+  </section>
+
+  <section class="slide">
+    <span class="number">03</span>
+    <div class="eyebrow">Core experience / Find My Match</div>
+    <h2>Find My Match: tələbə əvvəlcə özünü tanıdır.</h2>
+    <p class="lead">Free-form yazı yoxdur. Tələbə seçimlər edir, sistem isə bu seçimləri uyğunluq skoruna çevirir.</p>
+    <div class="flow">
+      <div class="step"><b>1</b><strong>Profil</strong><small>Home university, ixtisas, Bachelor/Master və GPA.</small></div>
+      <div class="step"><b>2</b><strong>Plan</strong><small>Autumn/Spring intake, ölkələr, dillər və aylıq büdcə.</small></div>
+      <div class="step"><b>3</b><strong>Həyat tərzi</strong><small>Student life, təhlükəsizlik, texnologiya, isti iqlim və s.</small></div>
+      <div class="step"><b>4</b><strong>Nəticə</strong><small>Skor, səbəblər və ev universitetinin nomination xəbərdarlığı.</small></div>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Matching engine</h3><span>Study field, degree level, GPA, preferred countries, language, budget, likes və dislikes birlikdə hesablanır.</span></div>
+      <div class="card"><h3>Nəticə nə verir?</h3><span>“Bu seçim sənə niyə uyğundur?” sualına səbəb əsaslı cavab: GPA +30, field +30, language +15 kimi faktorlar ayrıca görünür.</span></div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <span class="number">04</span>
+    <div class="eyebrow">Discovery / catalogue</div>
+    <h2>36 universitet, bir qərar məkanı.</h2>
+    <p class="lead">Kataloq universiteti yalnız göstərmir; şəhər, ixtisas, deadline, GPA və maliyyə reallığını bir kartda birləşdirir.</p>
+    <div class="metric"><strong>36</strong><span>Avropadan universitet və exchange istiqaməti</span></div>
+    <div class="metric"><strong>26</strong><span>ölkə üzrə geniş seçim və şəhər alternativləri</span></div>
+    <div class="metric"><strong>10+</strong><span>qərar məlumatı: field, level, GPA, dil, grant, deadline, cost, experience və housing</span></div>
+    <div class="grid">
+      <div class="card"><h3>Field fit</h3><span>Computer Science, Engineering, Business, Design, Arts, Social Sciences, Medicine və daha çox.</span></div>
+      <div class="card"><h3>Verified source</h3><span>Hər kartdan universitetin rəsmi mənbəsinə keçid. Mənbə və son yoxlama tarixi ayrıca göstərilir.</span></div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <span class="number">05</span>
+    <div class="eyebrow">City economics / no surprises</div>
+    <h2>Grant rəqəmini real həyatla müqayisə et.</h2>
+    <p class="lead">Tələbə kartı açanda şəhərin təxmini kirayəsini, gündəlik xərclərini, ümumi aylıq büdcəsini və grant coverage faizini görür.</p>
+    <div class="grid">
+      <div class="card"><strong>EUR 520</strong><span>Espoo / Helsinki üçün orta tələbə kirayəsi təxmini.</span></div>
+      <div class="card"><strong>EUR 470</strong><span>Yemək, nəqliyyat, telefon və əsas gündəlik xərclər.</span></div>
+      <div class="card"><strong>EUR 990</strong><span>Planlama üçün ümumi aylıq tələbə büdcəsi.</span></div>
+      <div class="card"><strong>55%</strong><span>EUR 540 grantın təxmini ümumi büdcəni qarşılama faizi.</span></div>
+    </div>
+    <div class="quote"><p>Rəqəmlər “zəmanətli qiymət” deyil; tələbəyə öncədən plan qurmaq üçün konservativ orta təxminlərdir.</p></div>
+  </section>
+
+  <section class="slide">
+    <span class="number">06</span>
+    <div class="eyebrow">Application readiness</div>
+    <h2>Qərardan müraciətə qədər bütün xəritə.</h2>
+    <div class="two-col">
+      <div>
+        <h3>Hər universitet kartında</h3>
+        <ul>
+          <li>İxtisasa və Bachelor/Master səviyyəsinə uyğunluq</li>
+          <li>Minimum GPA və tələbənin profilinə uyğunluq</li>
+          <li>Son müraciət tarixi və rəsmi universitet mənbəyi</li>
+          <li>Passport, Transcript, Learning Agreement və language certificate siyahısı</li>
+          <li>Home university nomination tələbi barədə aydın qeyd</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Student experience</h3>
+        <p>Şəhər üçün qısa, praktik kontekst: nə bahadır, tələbə həyatı necədir, housing nə qədər rəqabətlidir, hansı mövzuda əvvəlcədən planlama lazımdır.</p>
+        <div class="quote"><p>Match score fit-i göstərir; real eligibility-i isə home university coordinator və bilateral agreement təsdiqləyir.</p></div>
+        <div style="margin-top:22px"><span class="pill">Documents</span><span class="pill">Deadline</span><span class="pill">GPA</span><span class="pill">Language</span><span class="pill">Experience</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <span class="number">07</span>
+    <div class="eyebrow">Housing / city-specific action</div>
+    <h2>“Harada yaşayacağam?” sualı cavabsız qalmır.</h2>
+    <p class="lead">Hər universitet üçün eyni link deyil. Kartın altında həmin universitetə və şəhərə uyğun rəsmi dorm, student residence, co-living və lokal room-share keçidləri var.</p>
+    <div class="three">
+      <div class="card"><strong>Aalto / Espoo</strong><span>HOAS student housing · Aalto housing guide · Oikotie rentals</span></div>
+      <div class="card"><strong>TUM / Munich</strong><span>Studierendenwerk München · TUM housing · WG-Gesucht Munich</span></div>
+      <div class="card"><strong>Oslo</strong><span>SiO housing · UiO housing · Hybel Norway</span></div>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Birbaşa keçid</h3><span>Tələbə kartdan çıxmadan housing provider saytına keçir, qiymətləri yoxlayır və uyğun variantı seçir.</span></div>
+      <div class="card"><h3>Realist xəbərdarlıq</h3><span>Hər linkin yanında “official residence”, “shared flat” və ya “local listings” kimi nə olduğu izah edilir.</span></div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <span class="number">08</span>
+    <div class="eyebrow">Account / personal workspace</div>
+    <h2>Student journey bir sessiyada bitmir.</h2>
+    <p class="lead">ErasmusWithUs hesabı tələbənin shortlist-ini, profilini və müraciət hazırlığını bir yerdə saxlayır.</p>
+    <div class="three">
+      <div class="card"><strong>Save</strong><span>Universitetləri shortlist-ə əlavə et, sonra compare et.</span></div>
+      <div class="card"><strong>Profile</strong><span>İxtisas, GPA, dil və ölkə seçimlərini Account Settings-dən yenilə.</span></div>
+      <div class="card"><strong>Security</strong><span>Register, sign in, forgot password və email verification axınları.</span></div>
+    </div>
+    <div class="rule"></div>
+    <h3>Texniki baza</h3>
+    <p>React + Vite frontend · ASP.NET Core API · SQLite catalogue · JWT authentication · responsive modal workflows.</p>
+    <div class="footer">Product direction: make Erasmus decisions clearer, more realistic, and more actionable.</div>
+  </section>
+
+  <section class="slide closing">
+    <div class="eyebrow">ErasmusWithUs</div>
+    <h1>Find a destination.<br><em>Understand the decision.</em></h1>
+    <div class="rule"></div>
+    <p class="lead">Bir tələbənin “hara gedim?” sualını universitet, şəhər, büdcə, sənəd və yaşayış planına çevirən Erasmus kəşf platforması.</p>
+    <div class="tag">2026 / 27 · Prepared project presentation</div>
+    <span class="number">09</span>
+  </section>
+</body>
+</html>

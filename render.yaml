@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: erasmuswithus-api
+    runtime: docker
+    dockerfilePath: ./ErasmusWithUs.Api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: Jwt__Key
+        sync: false
+      - key: Email__SmtpHost
+        sync: false
+      - key: Email__SmtpPort
+        value: "587"
+      - key: Email__EnableSsl
+        value: "true"
+      - key: Email__Username
+        sync: false
+      - key: Email__Password
+        sync: false
+      - key: Email__From
+        sync: false
+
+  - type: web
+    name: erasmuswithus-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://erasmuswithus-api.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
