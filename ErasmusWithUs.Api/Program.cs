@@ -76,19 +76,22 @@ app.MapPost("/api/auth/register", async (RegisterRequest request, ErasmusDbConte
     if (request.Password.Length < 8)
         return Results.BadRequest(new { message = "Password must be at least 8 characters long." });
 
-    if (await database.Users.AnyAsync(user => user.Email == email))
-        return Results.Conflict(new { message = "An account with this email already exists." });
+    var user = await database.Users.SingleOrDefaultAsync(item => item.Email == email);
+    if (user is not null && user.EmailVerified)
+        return Results.Conflict(new { message = "An account with this email already exists. Sign in instead." });
 
-    var user = new UserEntity
+    user ??= new UserEntity
     {
         Email = email,
         DisplayName = request.DisplayName.Trim(),
         PasswordHash = string.Empty
     };
+    user.DisplayName = request.DisplayName.Trim();
     user.PasswordHash = passwordHasher.HashPassword(user, request.Password);
     user.EmailVerificationToken = GenerateVerificationCode();
     user.EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15);
-    database.Users.Add(user);
+    if (user.Id == 0)
+        database.Users.Add(user);
     await database.SaveChangesAsync();
     if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger))
         return Results.Problem("The account was created, but the verification email could not be sent. Check the SMTP settings in the deployment environment.", statusCode: StatusCodes.Status503ServiceUnavailable);
