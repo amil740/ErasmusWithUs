@@ -90,7 +90,8 @@ app.MapPost("/api/auth/register", async (RegisterRequest request, ErasmusDbConte
     user.EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15);
     database.Users.Add(user);
     await database.SaveChangesAsync();
-    await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger);
+    if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger))
+        return Results.Problem("The account was created, but the verification email could not be sent. Check the SMTP settings in the deployment environment.", statusCode: StatusCodes.Status503ServiceUnavailable);
 
     return Results.Ok(CreateAuthResponse(user, jwtKey, true,
         app.Environment.IsDevelopment() ? user.EmailVerificationToken : null));
@@ -110,7 +111,8 @@ app.MapPost("/api/auth/login", async (LoginRequest request, ErasmusDbContext dat
         user.EmailVerificationToken = GenerateVerificationCode();
         user.EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15);
         await database.SaveChangesAsync();
-        await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger);
+        if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger))
+            return Results.Problem("The verification email could not be sent. Check the SMTP settings in the deployment environment.", statusCode: StatusCodes.Status503ServiceUnavailable);
         return Results.Ok(CreateAuthResponse(user, jwtKey, true,
             app.Environment.IsDevelopment() ? user.EmailVerificationToken : null));
     }
@@ -169,7 +171,8 @@ app.MapPost("/api/auth/request-email-verification", async (EmailVerificationRequ
         user.EmailVerificationToken = GenerateVerificationCode();
         user.EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15);
         await database.SaveChangesAsync();
-        await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger);
+        if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger))
+            return Results.Problem("The verification email could not be sent. Check the SMTP settings in the deployment environment.", statusCode: StatusCodes.Status503ServiceUnavailable);
         return Results.Ok(new { message = "The verification code was sent.", token = app.Environment.IsDevelopment() ? user.EmailVerificationToken : null });
     }
 
@@ -603,27 +606,36 @@ static void TryAddAuthColumn(ErasmusDbContext database, string sql)
     }
 }
 
-static async Task SendVerificationCodeAsync(string email, string code, IConfiguration configuration, ILogger logger)
+static async Task<bool> SendVerificationCodeAsync(string email, string code, IConfiguration configuration, ILogger logger)
 {
     var host = configuration["Email:SmtpHost"];
     if (string.IsNullOrWhiteSpace(host))
     {
-        logger.LogInformation("Email verification code for {Email}: {Code}", email, code);
-        return;
+        logger.LogWarning("Email verification is not configured. Code for {Email}: {Code}", email, code);
+        return false;
     }
 
-    using var client = new SmtpClient(host, configuration.GetValue<int?>("Email:SmtpPort") ?? 587)
+    try
     {
-        EnableSsl = configuration.GetValue("Email:EnableSsl", true),
-        Credentials = new NetworkCredential(configuration["Email:Username"], configuration["Email:Password"])
-    };
-    var from = configuration["Email:From"] ?? configuration["Email:Username"];
-    using var message = new MailMessage(from!, email)
+        using var client = new SmtpClient(host, configuration.GetValue<int?>("Email:SmtpPort") ?? 587)
+        {
+            EnableSsl = configuration.GetValue("Email:EnableSsl", true),
+            Credentials = new NetworkCredential(configuration["Email:Username"], configuration["Email:Password"])
+        };
+        var from = configuration["Email:From"] ?? configuration["Email:Username"];
+        using var message = new MailMessage(from!, email)
+        {
+            Subject = "Your ErasmusWithUs verification code",
+            Body = $"Your six-letter ErasmusWithUs verification code is: {code}\n\nIt expires in 15 minutes."
+        };
+        await client.SendMailAsync(message);
+        return true;
+    }
+    catch (SmtpException exception)
     {
-        Subject = "Your ErasmusWithUs verification code",
-        Body = $"Your six-letter ErasmusWithUs verification code is: {code}\n\nIt expires in 15 minutes."
-    };
-    await client.SendMailAsync(message);
+        logger.LogError(exception, "Could not send verification email to {Email}", email);
+        return false;
+    }
 }
 
 static UserResponse ToUserResponse(UserEntity user)
