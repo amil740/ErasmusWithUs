@@ -41,7 +41,7 @@ export function loginAccount(payload: { email: string; password: string }) {
 }
 
 export function getCurrentUser(token: string) {
-  return request<User>('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+  return request<User>('/api/auth/me', { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } })
 }
 
 export function requestPasswordReset(payload: { email: string }) {

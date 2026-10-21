@@ -423,7 +423,7 @@ function App() {
 
     setIsSavingSettings(true)
     try {
-      const updatedUser = await updateAccountSettings(token, {
+      const profileToSave = {
         displayName: accountDisplayName.trim(),
         country: settingsProfile.country || null,
         studyField: settingsProfile.studyField || null,
@@ -431,15 +431,39 @@ function App() {
         gpa: Number(settingsProfile.gpa ?? 0),
         preferredCountries: settingsProfile.preferredCountries ?? [],
         languages: settingsProfile.languages ?? [],
-        homeUniversity: settingsProfile.homeUniversity || null,
-        intake: settingsProfile.intake || null,
+        homeUniversity: settingsProfile.homeUniversity.trim() || null,
+        intake: settingsProfile.intake.trim() || null,
         bio: accountBio.trim() || null,
         communityVisible,
         profilePhotoDataUrl: profilePhotoDirty ? profilePhotoDataUrl : undefined,
         removeProfilePhoto,
+      }
+      await updateAccountSettings(token, {
+        ...profileToSave,
       })
-      setCurrentUser(updatedUser)
-      hydrateAccount(updatedUser)
+
+      const persistedUser = await getCurrentUser(token)
+      const photoWasPersisted = removeProfilePhoto
+        ? persistedUser.profilePhotoDataUrl == null
+        : profilePhotoDirty ? persistedUser.profilePhotoDataUrl === profilePhotoDataUrl : true
+      const profileWasPersisted = persistedUser.displayName === profileToSave.displayName &&
+        persistedUser.country === profileToSave.country &&
+        persistedUser.studyField === profileToSave.studyField &&
+        persistedUser.level === profileToSave.level &&
+        persistedUser.gpa === profileToSave.gpa &&
+        JSON.stringify(persistedUser.preferredCountries) === JSON.stringify(profileToSave.preferredCountries) &&
+        JSON.stringify(persistedUser.languages) === JSON.stringify(profileToSave.languages) &&
+        (persistedUser.homeUniversity ?? null) === profileToSave.homeUniversity &&
+        (persistedUser.intake ?? null) === profileToSave.intake &&
+        (persistedUser.bio ?? null) === profileToSave.bio &&
+        persistedUser.communityVisible === profileToSave.communityVisible &&
+        photoWasPersisted
+
+      setCurrentUser(persistedUser)
+      hydrateAccount(persistedUser)
+      if (!profileWasPersisted) {
+        throw new Error('The server returned the old profile after saving. Your changes were not confirmed; please try again.')
+      }
       setSettingsMessage('Account settings saved successfully.')
     } catch (requestError) {
       setSettingsMessage(requestError instanceof Error ? requestError.message : 'Could not save your settings.')

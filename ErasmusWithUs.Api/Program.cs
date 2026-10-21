@@ -25,7 +25,14 @@ if (builder.Environment.IsProduction() &&
 jwtKey ??= "ErasmusWithUs-development-key-change-before-production-2026";
 
 builder.Services.AddOpenApi();
-var databasePath = builder.Configuration["Database:Path"] ?? "erasmuswithus.db";
+var configuredDatabasePath = builder.Configuration["Database:Path"];
+var databasePath = string.IsNullOrWhiteSpace(configuredDatabasePath)
+    ? builder.Environment.IsProduction() ? "/var/data/erasmuswithus.db" : "erasmuswithus.db"
+    : configuredDatabasePath;
+if (builder.Environment.IsProduction() && !Path.IsPathRooted(databasePath))
+{
+    throw new InvalidOperationException("Database:Path must be an absolute path in production so the database can use persistent storage.");
+}
 builder.Services.AddDbContext<ErasmusDbContext>(options =>
     options.UseSqlite($"Data Source={databasePath}"));
 builder.Services.AddSingleton<IPasswordHasher<UserEntity>, PasswordHasher<UserEntity>>();
@@ -104,6 +111,7 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+app.Logger.LogInformation("SQLite database path: {DatabasePath}", Path.GetFullPath(databasePath));
 
 using (var scope = app.Services.CreateScope())
 {
