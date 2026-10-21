@@ -410,8 +410,15 @@ h1 em {
   line-height: 1.45;
 }
 
-.intro-note button {
+.intro-note-actions {
   grid-column: 2;
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.intro-note-actions button {
+  width: 100%;
   border: 0;
   border-radius: 12px;
   background: linear-gradient(135deg, var(--teal) 0%, var(--teal-strong) 100%);
@@ -422,8 +429,15 @@ h1 em {
   justify-content: center;
   align-items: center;
   gap: 7px;
-  margin-top: 4px;
+  margin-top: 0;
   box-shadow: 0 15px 28px rgba(13, 106, 104, 0.22);
+}
+
+.intro-note-actions .match-cta {
+  background: rgba(13, 106, 104, 0.055);
+  border: 1px solid rgba(13, 106, 104, 0.14);
+  color: var(--teal-strong);
+  box-shadow: none;
 }
 
 .stats-strip {

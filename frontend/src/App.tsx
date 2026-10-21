@@ -482,12 +482,15 @@ function App() {
             <p>Explore exchange opportunities across Europe, then find the ones that fit your degree, language, budget, and ambitions.</p>
           </div>
           <div className="intro-note">
-            <span className="note-icon"><Sparkles size={18} /></span>
+            <span className="note-icon"><Building2 size={18} /></span>
             <div>
-              <strong>Personalised matching</strong>
-              <small>Answer a few quick questions and get the best-fit destinations for your profile.</small>
+              <strong>Explore universities</strong>
+              <small>Browse {opportunities.length} Erasmus destinations, compare study options, and check official sources.</small>
             </div>
-            <button onClick={() => setShowMatchForm(true)} disabled={isMatching}>{isMatching ? 'Matching...' : 'Find my match'} <ArrowUpRight size={15} /></button>
+            <div className="intro-note-actions">
+              <button onClick={() => handleNav('Universities')}>Browse universities <ArrowUpRight size={15} /></button>
+              <button className="match-cta" onClick={() => setShowMatchForm(true)} disabled={isMatching}>{isMatching ? 'Matching...' : 'Find my match'} <Sparkles size={15} /></button>
+            </div>
           </div>
         </section>}
 
