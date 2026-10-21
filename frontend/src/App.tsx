@@ -82,6 +82,12 @@ function profileFromUser(user: User): StudentProfile {
   }
 }
 
+function getDataUrlByteLength(dataUrl: string) {
+  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
+  return Math.floor(base64.length * 3 / 4) - padding
+}
+
 function App() {
   const [opportunities, setOpportunities] = useState<ErasmusOpportunity[]>([])
   const [search, setSearch] = useState('')
@@ -100,6 +106,7 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [showMatchForm, setShowMatchForm] = useState(false)
   const [showAccountSettings, setShowAccountSettings] = useState(false)
+  const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [matchProfile, setMatchProfile] = useState<StudentProfile>(defaultMatchProfile)
   const [settingsProfile, setSettingsProfile] = useState<StudentProfile>(defaultMatchProfile)
@@ -388,8 +395,13 @@ function App() {
       if (!context) throw new Error('Could not prepare this image.')
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
       bitmap.close()
-      const photo = canvas.toDataURL('image/jpeg', 0.72)
-      if (photo.length > 135_000) throw new Error('Choose a smaller or simpler image.')
+      let quality = 0.72
+      let photo = canvas.toDataURL('image/jpeg', quality)
+      while (getDataUrlByteLength(photo) > 90_000 && quality > 0.4) {
+        quality = Math.max(0.4, quality - 0.08)
+        photo = canvas.toDataURL('image/jpeg', quality)
+      }
+      if (getDataUrlByteLength(photo) > 90_000) throw new Error('Choose a smaller or simpler image.')
       setProfilePhotoDataUrl(photo)
       setProfilePhotoDirty(true)
       setRemoveProfilePhoto(false)
@@ -409,6 +421,7 @@ function App() {
       return
     }
 
+    setIsSavingSettings(true)
     try {
       const updatedUser = await updateAccountSettings(token, {
         displayName: accountDisplayName.trim(),
@@ -426,12 +439,12 @@ function App() {
         removeProfilePhoto,
       })
       setCurrentUser(updatedUser)
-      setProfilePhotoDataUrl(updatedUser.profilePhotoDataUrl ?? null)
-      setProfilePhotoDirty(false)
-      setRemoveProfilePhoto(false)
+      hydrateAccount(updatedUser)
       setSettingsMessage('Account settings saved successfully.')
     } catch (requestError) {
       setSettingsMessage(requestError instanceof Error ? requestError.message : 'Could not save your settings.')
+    } finally {
+      setIsSavingSettings(false)
     }
   }
 
@@ -587,7 +600,7 @@ function App() {
             <label className="account-field-label">Languages<div className="chip-grid">{languageOptions.map((language) => <button type="button" key={language} className={'chip ' + (settingsProfile.languages.includes(language) ? 'active' : '')} onClick={() => toggleMultiChoice('languages', language, settingsProfile, (next) => setSettingsProfile(next))}>{language}</button>)}</div></label>
             <label className="community-visibility"><input type="checkbox" checked={communityVisible} onChange={(event) => setCommunityVisible(event.target.checked)} /><span><strong>Show my profile to matching students</strong><small>Students with the same destination and intake can see your photo, display name, home university, field and introduction. Your email and GPA are never shown.</small></span></label>
             {settingsMessage && <div className="auth-message" role="status">{settingsMessage}</div>}
-            <button className="primary-button auth-submit" type="submit">Save my Erasmus profile <ArrowUpRight size={15} /></button>
+            <button className="primary-button auth-submit" type="submit" disabled={isSavingSettings}>{isSavingSettings ? 'Saving…' : 'Save my Erasmus profile'} <ArrowUpRight size={15} /></button>
           </form>
         </section>
       </div>}
