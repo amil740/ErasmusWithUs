@@ -68,6 +68,50 @@ export type User = {
   languages: string[]
   emailVerified?: boolean
   createdAt?: string
+  homeUniversity?: string | null
+  intake?: string | null
+  bio?: string | null
+  communityVisible?: boolean
+  profilePhotoDataUrl?: string | null
+}
+
+export type StudentPlan = {
+  id: number
+  opportunityId: number
+  university: string
+  intake: string
+  createdAt: string
+}
+
+export type CommunityStudent = {
+  id: number
+  displayName: string
+  homeUniversity: string | null
+  studyField: string | null
+  level: string | null
+  intake: string | null
+  bio: string | null
+  profilePhotoDataUrl: string | null
+}
+
+export type ConversationSummary = {
+  id: number
+  otherUserId: number
+  otherDisplayName: string
+  otherHomeUniversity: string | null
+  otherProfilePhotoDataUrl: string | null
+  university: string
+  intake: string
+  lastMessage: string | null
+  lastMessageAt: string | null
+  createdAt: string
+}
+
+export type ChatMessage = {
+  id: number
+  senderUserId: number
+  content: string
+  createdAt: string
 }
 
 export type AuthResponse = {

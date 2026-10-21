@@ -1,32 +1,31 @@
-# React + TypeScript + Vite
+# ErasmusWithUs frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React, TypeScript, and Vite client for discovering exchange opportunities, researching universities, matching with other Erasmus students, comparing destinations, and planning an application.
 
-Currently, two official plugins are available:
+The student community matches verified students by destination university and intake. Profiles stay private until the student enables community visibility in **My account**. The account also stores the student's home university, study profile, exchange intake, introduction, and an optional compressed profile photo.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Run locally
 
-## React Compiler
+From this directory:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+npm ci
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Run the API from the repository root in a second terminal:
+
+```sh
+dotnet run --project ErasmusWithUs.Api
+```
+
+The frontend uses `http://localhost:5238` by default. Set `VITE_API_BASE_URL` in a `.env` file when the API runs elsewhere.
+
+## Checks
+
+```sh
+npm run build
+npm run lint
+```
+
+See [`../DEPLOYMENT.md`](../DEPLOYMENT.md) for production deployment and required environment settings.

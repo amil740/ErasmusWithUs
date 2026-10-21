@@ -15,6 +15,11 @@ public sealed class UserEntity
     public string? StudyField { get; set; }
     public string? Level { get; set; }
     public double? Gpa { get; set; }
+    public string? HomeUniversity { get; set; }
+    public string? Intake { get; set; }
+    public string? Bio { get; set; }
+    public bool CommunityVisible { get; set; }
+    public string? ProfilePhotoDataUrl { get; set; }
     public string PreferredCountriesJson { get; set; } = "[]";
     public string LanguagesJson { get; set; } = "[]";
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

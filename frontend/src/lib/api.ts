@@ -1,4 +1,7 @@
-import type { AuthResponse, ErasmusOpportunity, MatchResult, StudentProfile, User } from '../types/erasmus'
+import type {
+  AuthResponse, ChatMessage, CommunityStudent, ConversationSummary, ErasmusOpportunity,
+  MatchResult, StudentPlan, StudentProfile, User,
+} from '../types/erasmus'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5238'
 
@@ -12,6 +15,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const payload = await response.json().catch(() => null) as { message?: string } | null
     throw new Error(payload?.message ?? `API request failed with status ${response.status}`)
   }
+  if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 
@@ -75,10 +79,59 @@ export function updateAccountSettings(token: string, payload: Partial<User> & {
   gpa?: number | null
   preferredCountries?: string[]
   languages?: string[]
+  homeUniversity?: string | null
+  intake?: string | null
+  bio?: string | null
+  communityVisible?: boolean
+  profilePhotoDataUrl?: string | null
+  removeProfilePhoto?: boolean
 }) {
   return request<User>('/api/profile', {
     method: 'PUT',
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
+  })
+}
+
+export function getStudentPlans(token: string) {
+  return request<StudentPlan[]>('/api/community/plans', { headers: { Authorization: `Bearer ${token}` } })
+}
+
+export function createStudentPlan(token: string, payload: { opportunityId: number; intake: string }) {
+  return request<StudentPlan>('/api/community/plans', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(payload),
+  })
+}
+
+export function deleteStudentPlan(token: string, planId: number) {
+  return request<void>(`/api/community/plans/${planId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+}
+
+export function getCommunityStudents(token: string, opportunityId: number, intake: string) {
+  const query = new URLSearchParams({ opportunityId: String(opportunityId), intake })
+  return request<CommunityStudent[]>(`/api/community/students?${query.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+}
+
+export function getConversations(token: string) {
+  return request<ConversationSummary[]>('/api/community/conversations', { headers: { Authorization: `Bearer ${token}` } })
+}
+
+export function startConversation(token: string, payload: { recipientUserId: number; opportunityId: number; intake: string }) {
+  return request<{ conversationId: number }>('/api/community/conversations', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(payload),
+  })
+}
+
+export function getMessages(token: string, conversationId: number) {
+  return request<ChatMessage[]>(`/api/community/conversations/${conversationId}/messages`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+}
+
+export function sendMessage(token: string, conversationId: number, content: string) {
+  return request<ChatMessage>(`/api/community/conversations/${conversationId}/messages`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ content }),
   })
 }

@@ -9,15 +9,26 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Mail;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (builder.Environment.IsProduction() &&
+    (string.IsNullOrWhiteSpace(jwtKey) || Encoding.UTF8.GetByteCount(jwtKey) < 32))
+{
+    throw new InvalidOperationException("Set Jwt:Key to a secret of at least 32 bytes before starting the API in production.");
+}
+
+jwtKey ??= "ErasmusWithUs-development-key-change-before-production-2026";
+
 builder.Services.AddOpenApi();
+var databasePath = builder.Configuration["Database:Path"] ?? "erasmuswithus.db";
 builder.Services.AddDbContext<ErasmusDbContext>(options =>
-    options.UseSqlite("Data Source=erasmuswithus.db"));
+    options.UseSqlite($"Data Source={databasePath}"));
 builder.Services.AddSingleton<IPasswordHasher<UserEntity>, PasswordHasher<UserEntity>>();
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "ErasmusWithUs-development-key-change-before-production-2026";
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -29,8 +40,68 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         ClockSkew = TimeSpan.FromMinutes(1)
     });
 builder.Services.AddAuthorization();
+var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").GetChildren()
+    .Select(item => item.Value)
+    .Where(item => !string.IsNullOrWhiteSpace(item))
+    .Cast<string>()
+    .ToArray();
+if (configuredOrigins.Length == 0 && builder.Configuration["Cors:AllowedOrigins"] is { } originsValue)
+{
+    configuredOrigins = originsValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+}
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
-    policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+{
+    if (configuredOrigins.Length > 0)
+        policy.WithOrigins(configuredOrigins).AllowAnyHeader().AllowAnyMethod();
+}));
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { message = "Too many requests. Wait a bit and try again." },
+            cancellationToken: cancellationToken);
+    };
+
+    options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
+        GetClientIp(context),
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 12,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+    options.AddPolicy("account-email", context => RateLimitPartition.GetFixedWindowLimiter(
+        GetClientIp(context),
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 4,
+            Window = TimeSpan.FromMinutes(15),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+    options.AddPolicy("verify-code", context => RateLimitPartition.GetFixedWindowLimiter(
+        GetClientIp(context),
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(15),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+    options.AddPolicy("community-message", context => RateLimitPartition.GetFixedWindowLimiter(
+        GetClientIp(context),
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 30,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+});
 
 var app = builder.Build();
 
@@ -39,6 +110,7 @@ using (var scope = app.Services.CreateScope())
     var database = scope.ServiceProvider.GetRequiredService<ErasmusDbContext>();
     database.Database.EnsureCreated();
     EnsureAuthColumns(database);
+    EnsureCommunityTables(database);
 
     var existingOpportunityIds = database.Opportunities.Select(item => item.Id).ToHashSet();
     var missingOpportunities = SeedData.AllOpportunities
@@ -65,16 +137,23 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseRouting();
 app.UseCors();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapPost("/api/auth/register", async (RegisterRequest request, ErasmusDbContext database,
     IPasswordHasher<UserEntity> passwordHasher) =>
 {
-    var email = request.Email.Trim().ToLowerInvariant();
-    if (request.Password.Length < 8)
+    if (string.IsNullOrWhiteSpace(request.Email) || !MailAddress.TryCreate(request.Email, out _) ||
+        string.IsNullOrWhiteSpace(request.DisplayName))
+        return Results.BadRequest(new { message = "Enter a valid email address and name." });
+
+    if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
         return Results.BadRequest(new { message = "Password must be at least 8 characters long." });
+
+    var email = request.Email.Trim().ToLowerInvariant();
 
     var user = await database.Users.SingleOrDefaultAsync(item => item.Email == email);
     if (user is not null && user.EmailVerified)
@@ -93,16 +172,19 @@ app.MapPost("/api/auth/register", async (RegisterRequest request, ErasmusDbConte
     if (user.Id == 0)
         database.Users.Add(user);
     await database.SaveChangesAsync();
-    if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger))
+    if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger, app.Environment.IsDevelopment()))
         return Results.Problem("The account was created, but the verification email could not be sent. Check the SMTP settings in the deployment environment.", statusCode: StatusCodes.Status503ServiceUnavailable);
 
     return Results.Ok(CreateAuthResponse(user, jwtKey, true,
         app.Environment.IsDevelopment() ? user.EmailVerificationToken : null));
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/auth/login", async (LoginRequest request, ErasmusDbContext database,
     IPasswordHasher<UserEntity> passwordHasher) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+        return Results.Json(new { message = "Invalid email or password. Create an ErasmusWithUs account first." }, statusCode: StatusCodes.Status401Unauthorized);
+
     var email = request.Email.Trim().ToLowerInvariant();
     var user = await database.Users.SingleOrDefaultAsync(item => item.Email == email);
     if (user is null || passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password)
@@ -114,46 +196,68 @@ app.MapPost("/api/auth/login", async (LoginRequest request, ErasmusDbContext dat
         user.EmailVerificationToken = GenerateVerificationCode();
         user.EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15);
         await database.SaveChangesAsync();
-        if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger))
+        if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger, app.Environment.IsDevelopment()))
             return Results.Problem("The verification email could not be sent. Check the SMTP settings in the deployment environment.", statusCode: StatusCodes.Status503ServiceUnavailable);
         return Results.Ok(CreateAuthResponse(user, jwtKey, true,
             app.Environment.IsDevelopment() ? user.EmailVerificationToken : null));
     }
 
     return Results.Ok(CreateAuthResponse(user, jwtKey));
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/auth/forgot-password", async (ForgotPasswordRequest request, ErasmusDbContext database) =>
 {
-    var email = request.Email.Trim().ToLowerInvariant();
+    var email = request.Email?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(email) || !MailAddress.TryCreate(email, out _))
+        return Results.BadRequest(new { message = "Enter a valid email address." });
+
     var user = await database.Users.SingleOrDefaultAsync(item => item.Email == email);
+    string? resetToken = null;
 
     if (user is not null)
     {
-        user.PasswordResetToken = SeedData.GenerateToken();
+        resetToken = SeedData.GenerateToken();
+        user.PasswordResetToken = HashToken(resetToken);
         user.PasswordResetTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1);
         await database.SaveChangesAsync();
-        return Results.Ok(new { message = "If the email exists, a reset token was generated.", token = user.PasswordResetToken });
+
+        var sent = await SendEmailAsync(
+            user.Email,
+            "Reset your Erasmus With Us password",
+            $"Your password reset code is:\n\n{resetToken}\n\nIt expires in one hour. If you did not request a password reset, you can ignore this email.",
+            builder.Configuration,
+            app.Logger,
+            app.Environment.IsDevelopment());
+
+        if (!sent)
+            app.Logger.LogWarning("Password reset email could not be sent for account {UserId}.", user.Id);
     }
 
-    return Results.Ok(new { message = "If the email exists, a reset token was generated." });
-});
+    return Results.Ok(new
+    {
+        message = "If an account exists for that email, a password reset code has been sent.",
+        token = app.Environment.IsDevelopment() ? resetToken : null
+    });
+}).RequireRateLimiting("account-email");
 
 app.MapPost("/api/auth/reset-password", async (ResetPasswordRequest request, ErasmusDbContext database,
     IPasswordHasher<UserEntity> passwordHasher) =>
 {
-    var email = request.Email.Trim().ToLowerInvariant();
+    var email = request.Email?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(email))
+        return Results.BadRequest(new { message = "Enter a valid email address." });
+
     var user = await database.Users.SingleOrDefaultAsync(item => item.Email == email);
     if (user is null)
-        return Results.BadRequest(new { message = "No account matches this email address." });
+        return Results.BadRequest(new { message = "This password reset code is invalid or expired." });
 
     if (string.IsNullOrWhiteSpace(request.Token) ||
-        user.PasswordResetToken != request.Token ||
+        !MatchesToken(request.Token, user.PasswordResetToken) ||
         user.PasswordResetTokenExpiresAt is null ||
         user.PasswordResetTokenExpiresAt.Value < DateTimeOffset.UtcNow)
         return Results.BadRequest(new { message = "This password reset token is invalid or expired." });
 
-    if (request.NewPassword.Length < 8)
+    if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
         return Results.BadRequest(new { message = "Password must be at least 8 characters long." });
 
     user.PasswordHash = passwordHasher.HashPassword(user, request.NewPassword);
@@ -162,10 +266,13 @@ app.MapPost("/api/auth/reset-password", async (ResetPasswordRequest request, Era
     await database.SaveChangesAsync();
 
     return Results.Ok(new { message = "Password updated successfully." });
-});
+}).RequireRateLimiting("account-email");
 
 app.MapPost("/api/auth/request-email-verification", async (EmailVerificationRequest request, ErasmusDbContext database) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Email) || !MailAddress.TryCreate(request.Email, out _))
+        return Results.BadRequest(new { message = "Enter a valid email address." });
+
     var email = request.Email.Trim().ToLowerInvariant();
     var user = await database.Users.SingleOrDefaultAsync(item => item.Email == email);
 
@@ -174,13 +281,13 @@ app.MapPost("/api/auth/request-email-verification", async (EmailVerificationRequ
         user.EmailVerificationToken = GenerateVerificationCode();
         user.EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15);
         await database.SaveChangesAsync();
-        if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger))
+        if (!await SendVerificationCodeAsync(user.Email, user.EmailVerificationToken, builder.Configuration, app.Logger, app.Environment.IsDevelopment()))
             return Results.Problem("The verification email could not be sent. Check the SMTP settings in the deployment environment.", statusCode: StatusCodes.Status503ServiceUnavailable);
         return Results.Ok(new { message = "The verification code was sent.", token = app.Environment.IsDevelopment() ? user.EmailVerificationToken : null });
     }
 
     return Results.Ok(new { message = "If the email exists, a verification link is available." });
-});
+}).RequireRateLimiting("account-email");
 
 app.MapPost("/api/auth/verify-email", async (VerifyEmailRequest request, ErasmusDbContext database) =>
 {
@@ -201,13 +308,13 @@ app.MapPost("/api/auth/verify-email", async (VerifyEmailRequest request, Erasmus
     await database.SaveChangesAsync();
 
     return Results.Ok(new { message = "Email verified successfully." });
-});
+}).RequireRateLimiting("verify-code");
 
 app.MapGet("/api/auth/me", async (ClaimsPrincipal principal, ErasmusDbContext database) =>
 {
     var userId = GetUserId(principal);
     var user = userId is null ? null : await database.Users.FindAsync(userId.Value);
-    return user is null ? Results.Unauthorized() : Results.Ok(ToUserResponse(user));
+    return user is null || !user.EmailVerified ? Results.Unauthorized() : Results.Ok(ToUserResponse(user));
 }).RequireAuthorization();
 
 app.MapPut("/api/profile", async (UpdateProfileRequest request, ClaimsPrincipal principal,
@@ -215,21 +322,232 @@ app.MapPut("/api/profile", async (UpdateProfileRequest request, ClaimsPrincipal 
 {
     var userId = GetUserId(principal);
     var user = userId is null ? null : await database.Users.FindAsync(userId.Value);
-    if (user is null)
+    if (user is null || !user.EmailVerified)
         return Results.Unauthorized();
 
+    if (request.DisplayName is { } displayName && (displayName.Trim().Length < 2 || displayName.Trim().Length > 80))
+        return Results.BadRequest(new { message = "Your name must be between 2 and 80 characters." });
+    if (request.HomeUniversity?.Length > 160 || request.Intake?.Length > 40 || request.Bio?.Length > 320)
+        return Results.BadRequest(new { message = "Check the length of your university, intake, or bio field." });
+    if (request.Gpa is < 0 or > 4)
+        return Results.BadRequest(new { message = "GPA must be between 0 and 4." });
+    if (request.ProfilePhotoDataUrl is not null && !TryNormalizeProfilePhoto(request.ProfilePhotoDataUrl, out _))
+        return Results.BadRequest(new { message = "Choose a valid JPEG profile photo smaller than 90 KB." });
+
+    if (!string.IsNullOrWhiteSpace(request.DisplayName))
+        user.DisplayName = request.DisplayName.Trim();
     user.Country = request.Country;
     user.StudyField = request.StudyField;
     user.Level = request.Level;
     user.Gpa = request.Gpa;
-    if (!string.IsNullOrWhiteSpace(request.DisplayName))
-        user.DisplayName = request.DisplayName.Trim();
+    user.HomeUniversity = request.HomeUniversity?.Trim();
+    user.Intake = request.Intake?.Trim();
+    user.Bio = request.Bio?.Trim();
+    user.CommunityVisible = request.CommunityVisible ?? user.CommunityVisible;
+    if (request.RemoveProfilePhoto)
+        user.ProfilePhotoDataUrl = null;
+    else if (request.ProfilePhotoDataUrl is not null)
+    {
+        _ = TryNormalizeProfilePhoto(request.ProfilePhotoDataUrl, out var normalizedPhotoDataUrl);
+        user.ProfilePhotoDataUrl = normalizedPhotoDataUrl;
+    }
     user.PreferredCountriesJson = System.Text.Json.JsonSerializer.Serialize(request.PreferredCountries);
     user.LanguagesJson = System.Text.Json.JsonSerializer.Serialize(request.Languages);
     await database.SaveChangesAsync();
 
     return Results.Ok(ToUserResponse(user));
 }).RequireAuthorization();
+
+app.MapGet("/api/community/plans", async (ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+
+    var plans = await database.StudentPlans.AsNoTracking()
+        .Where(item => item.UserId == userId.Value)
+        .OrderByDescending(item => item.CreatedAt)
+        .ToArrayAsync();
+    return Results.Ok(plans.Select(item => new StudentPlanResponse(
+        item.Id,
+        item.OpportunityId,
+        opportunities.FirstOrDefault(opportunity => opportunity.Id == item.OpportunityId)?.University ?? "University",
+        item.Intake,
+        item.CreatedAt)));
+}).RequireAuthorization();
+
+app.MapPost("/api/community/plans", async (CreateStudentPlanRequest request, ClaimsPrincipal principal,
+    ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var intake = request.Intake?.Trim();
+    if (request.OpportunityId <= 0 || !opportunities.Any(item => item.Id == request.OpportunityId) ||
+        string.IsNullOrWhiteSpace(intake) || intake.Length > 40)
+        return Results.BadRequest(new { message = "Choose a destination and valid intake term." });
+
+    var existing = await database.StudentPlans.SingleOrDefaultAsync(item => item.UserId == userId.Value &&
+        item.OpportunityId == request.OpportunityId && item.Intake == intake);
+    if (existing is not null)
+        return Results.Ok(new StudentPlanResponse(existing.Id, existing.OpportunityId,
+            opportunities.First(item => item.Id == existing.OpportunityId).University, existing.Intake, existing.CreatedAt));
+
+    var plan = new StudentPlanEntity { UserId = userId.Value, OpportunityId = request.OpportunityId, Intake = intake };
+    database.StudentPlans.Add(plan);
+    await database.SaveChangesAsync();
+    return Results.Created($"/api/community/plans/{plan.Id}", new StudentPlanResponse(plan.Id, plan.OpportunityId,
+        opportunities.First(item => item.Id == plan.OpportunityId).University, plan.Intake, plan.CreatedAt));
+}).RequireAuthorization();
+
+app.MapDelete("/api/community/plans/{id:int}", async (int id, ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var plan = await database.StudentPlans.SingleOrDefaultAsync(item => item.Id == id && item.UserId == userId.Value);
+    if (plan is null)
+        return Results.NotFound();
+    database.StudentPlans.Remove(plan);
+    await database.SaveChangesAsync();
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapGet("/api/community/students", async (int opportunityId, string intake, ClaimsPrincipal principal,
+    ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    if (!opportunities.Any(item => item.Id == opportunityId) || string.IsNullOrWhiteSpace(intake) || intake.Length > 40)
+        return Results.BadRequest(new { message = "Choose a destination and intake term." });
+
+    var matchingIds = await database.StudentPlans.AsNoTracking()
+        .Where(item => item.OpportunityId == opportunityId && item.Intake == intake && item.UserId != userId.Value)
+        .Select(item => item.UserId)
+        .Distinct()
+        .ToArrayAsync();
+    var students = await database.Users.AsNoTracking()
+        .Where(item => matchingIds.Contains(item.Id) && item.EmailVerified && item.CommunityVisible)
+        .OrderBy(item => item.DisplayName)
+        .Take(30)
+        .Select(item => new StudentCardResponse(item.Id, item.DisplayName, item.HomeUniversity, item.StudyField,
+            item.Level, item.Intake, item.Bio, item.ProfilePhotoDataUrl))
+        .ToArrayAsync();
+    return Results.Ok(students);
+}).RequireAuthorization();
+
+app.MapGet("/api/community/conversations", async (ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+
+    var conversations = await database.Conversations.AsNoTracking()
+        .Where(item => item.UserAId == userId.Value || item.UserBId == userId.Value)
+        .OrderByDescending(item => item.CreatedAt)
+        .Take(50)
+        .ToArrayAsync();
+    var summaries = new List<ConversationSummaryResponse>(conversations.Length);
+    foreach (var conversation in conversations)
+    {
+        var otherUserId = conversation.UserAId == userId.Value ? conversation.UserBId : conversation.UserAId;
+        var otherUser = await database.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == otherUserId);
+        var lastMessage = await database.Messages.AsNoTracking()
+            .Where(item => item.ConversationId == conversation.Id)
+            .OrderByDescending(item => item.Id)
+            .Select(item => new MessagePreview(item.Content, item.CreatedAt))
+            .FirstOrDefaultAsync();
+        if (otherUser is null) continue;
+        summaries.Add(new ConversationSummaryResponse(conversation.Id, otherUser.Id, otherUser.DisplayName,
+            otherUser.CommunityVisible ? otherUser.HomeUniversity : null,
+            otherUser.CommunityVisible ? otherUser.ProfilePhotoDataUrl : null,
+            opportunities.FirstOrDefault(item => item.Id == conversation.OpportunityId)?.University ?? "Erasmus exchange",
+            conversation.Intake, lastMessage?.Content, lastMessage?.CreatedAt, conversation.CreatedAt));
+    }
+    return Results.Ok(summaries);
+}).RequireAuthorization();
+
+app.MapPost("/api/community/conversations", async (StartConversationRequest request, ClaimsPrincipal principal,
+    ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var recipient = await database.Users.SingleOrDefaultAsync(item => item.Id == request.RecipientUserId &&
+        item.EmailVerified && item.CommunityVisible);
+    var intake = request.Intake?.Trim();
+    if (recipient is null || recipient.Id == userId.Value || !opportunities.Any(item => item.Id == request.OpportunityId) ||
+        string.IsNullOrWhiteSpace(intake) || intake.Length > 40)
+        return Results.BadRequest(new { message = "This student is not available for this exchange plan." });
+
+    var senderHasPlan = await database.StudentPlans.AnyAsync(item => item.UserId == userId.Value &&
+        item.OpportunityId == request.OpportunityId && item.Intake == intake);
+    var recipientHasPlan = await database.StudentPlans.AnyAsync(item => item.UserId == recipient.Id &&
+        item.OpportunityId == request.OpportunityId && item.Intake == intake);
+    if (!senderHasPlan || !recipientHasPlan)
+        return Results.Forbid();
+
+    var userAId = Math.Min(userId.Value, recipient.Id);
+    var userBId = Math.Max(userId.Value, recipient.Id);
+    var conversation = await database.Conversations.SingleOrDefaultAsync(item => item.UserAId == userAId &&
+        item.UserBId == userBId && item.OpportunityId == request.OpportunityId && item.Intake == intake);
+    if (conversation is null)
+    {
+        conversation = new ConversationEntity
+        {
+            UserAId = userAId,
+            UserBId = userBId,
+            OpportunityId = request.OpportunityId,
+            Intake = intake
+        };
+        database.Conversations.Add(conversation);
+        await database.SaveChangesAsync();
+    }
+    return Results.Ok(new { conversationId = conversation.Id });
+}).RequireAuthorization();
+
+app.MapGet("/api/community/conversations/{id:int}/messages", async (int id, ClaimsPrincipal principal,
+    ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var conversation = await database.Conversations.AsNoTracking()
+        .SingleOrDefaultAsync(item => item.Id == id && (item.UserAId == userId.Value || item.UserBId == userId.Value));
+    if (conversation is null)
+        return Results.NotFound();
+
+    var messages = await database.Messages.AsNoTracking()
+        .Where(item => item.ConversationId == id)
+        .OrderByDescending(item => item.Id)
+        .Take(50)
+        .OrderBy(item => item.Id)
+        .Select(item => new MessageResponse(item.Id, item.SenderUserId, item.Content, item.CreatedAt))
+        .ToArrayAsync();
+    return Results.Ok(messages);
+}).RequireAuthorization();
+
+app.MapPost("/api/community/conversations/{id:int}/messages", async (int id, SendMessageRequest request,
+    ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var conversation = await database.Conversations
+        .SingleOrDefaultAsync(item => item.Id == id && (item.UserAId == userId.Value || item.UserBId == userId.Value));
+    if (conversation is null)
+        return Results.NotFound();
+    var content = request.Content?.Trim();
+    if (string.IsNullOrWhiteSpace(content) || content.Length > 2000)
+        return Results.BadRequest(new { message = "Messages must contain between 1 and 2,000 characters." });
+
+    var message = new MessageEntity { ConversationId = id, SenderUserId = userId.Value, Content = content };
+    database.Messages.Add(message);
+    await database.SaveChangesAsync();
+    return Results.Created($"/api/community/conversations/{id}/messages/{message.Id}",
+        new MessageResponse(message.Id, message.SenderUserId, message.Content, message.CreatedAt));
+}).RequireAuthorization().RequireRateLimiting("community-message");
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", service = "ErasmusWithUs.Api" }));
 
@@ -563,6 +881,19 @@ static int? GetUserId(ClaimsPrincipal principal)
     return int.TryParse(value, out var userId) ? userId : null;
 }
 
+static string GetClientIp(HttpContext context)
+{
+    // Render documents the first X-Forwarded-For value as the original client IP.
+    var forwardedIp = context.Request.Headers["X-Forwarded-For"]
+        .ToString()
+        .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+        .FirstOrDefault();
+
+    return IPAddress.TryParse(forwardedIp, out var parsedForwardedIp)
+        ? parsedForwardedIp.ToString()
+        : context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+}
+
 static AuthResponse CreateAuthResponse(UserEntity user, string jwtKey, bool verificationRequired = false, string? verificationCode = null)
 {
     var claims = new[]
@@ -585,7 +916,40 @@ static AuthResponse CreateAuthResponse(UserEntity user, string jwtKey, bool veri
 static string GenerateVerificationCode()
 {
     const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-    return string.Concat(Enumerable.Range(0, 6).Select(_ => alphabet[Random.Shared.Next(alphabet.Length)]));
+    return string.Concat(Enumerable.Range(0, 6).Select(_ => alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)]));
+}
+
+static string HashToken(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
+static bool MatchesToken(string token, string? expectedHash)
+{
+    if (string.IsNullOrWhiteSpace(expectedHash))
+        return false;
+
+    var actualHash = Encoding.UTF8.GetBytes(HashToken(token));
+    var storedHash = Encoding.UTF8.GetBytes(expectedHash);
+    return actualHash.Length == storedHash.Length && CryptographicOperations.FixedTimeEquals(actualHash, storedHash);
+}
+
+static bool TryNormalizeProfilePhoto(string dataUrl, out string? normalizedDataUrl)
+{
+    const string prefix = "data:image/jpeg;base64,";
+    normalizedDataUrl = null;
+    if (!dataUrl.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || dataUrl.Length > 135_000)
+        return false;
+
+    try
+    {
+        var bytes = Convert.FromBase64String(dataUrl[prefix.Length..]);
+        if (bytes.Length is < 4 or > 90_000 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF)
+            return false;
+        normalizedDataUrl = prefix + Convert.ToBase64String(bytes);
+        return true;
+    }
+    catch (FormatException)
+    {
+        return false;
+    }
 }
 
 static void EnsureAuthColumns(ErasmusDbContext database)
@@ -595,6 +959,65 @@ static void EnsureAuthColumns(ErasmusDbContext database)
     TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN EmailVerificationTokenExpiresAt TEXT NULL");
     TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN PasswordResetToken TEXT NULL");
     TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN PasswordResetTokenExpiresAt TEXT NULL");
+    TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN HomeUniversity TEXT NULL");
+    TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN Intake TEXT NULL");
+    TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN Bio TEXT NULL");
+    TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN CommunityVisible INTEGER NOT NULL DEFAULT 0");
+    TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN ProfilePhotoDataUrl TEXT NULL");
+}
+
+static void EnsureCommunityTables(ErasmusDbContext database)
+{
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS StudentPlans (
+            Id INTEGER NOT NULL CONSTRAINT PK_StudentPlans PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            OpportunityId INTEGER NOT NULL,
+            Intake TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_StudentPlans_UserId_OpportunityId_Intake
+        ON StudentPlans (UserId, OpportunityId, Intake)
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE INDEX IF NOT EXISTS IX_StudentPlans_OpportunityId_Intake
+        ON StudentPlans (OpportunityId, Intake)
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS Conversations (
+            Id INTEGER NOT NULL CONSTRAINT PK_Conversations PRIMARY KEY AUTOINCREMENT,
+            UserAId INTEGER NOT NULL,
+            UserBId INTEGER NOT NULL,
+            OpportunityId INTEGER NOT NULL,
+            Intake TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            CHECK (UserAId < UserBId),
+            FOREIGN KEY (UserAId) REFERENCES Users(Id) ON DELETE CASCADE,
+            FOREIGN KEY (UserBId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_Conversations_UserAId_UserBId_OpportunityId_Intake
+        ON Conversations (UserAId, UserBId, OpportunityId, Intake)
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS Messages (
+            Id INTEGER NOT NULL CONSTRAINT PK_Messages PRIMARY KEY AUTOINCREMENT,
+            ConversationId INTEGER NOT NULL,
+            SenderUserId INTEGER NOT NULL,
+            Content TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            FOREIGN KEY (ConversationId) REFERENCES Conversations(Id) ON DELETE CASCADE,
+            FOREIGN KEY (SenderUserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE INDEX IF NOT EXISTS IX_Messages_ConversationId_Id
+        ON Messages (ConversationId, Id)
+        """);
 }
 
 static void TryAddAuthColumn(ErasmusDbContext database, string sql)
@@ -609,34 +1032,53 @@ static void TryAddAuthColumn(ErasmusDbContext database, string sql)
     }
 }
 
-static async Task<bool> SendVerificationCodeAsync(string email, string code, IConfiguration configuration, ILogger logger)
+static Task<bool> SendVerificationCodeAsync(string email, string code, IConfiguration configuration, ILogger logger, bool allowDevelopmentFallback)
+{
+    return SendEmailAsync(
+        email,
+        "Your Erasmus With Us verification code",
+        $"Your six-letter Erasmus With Us verification code is: {code}\n\nIt expires in 15 minutes.",
+        configuration,
+        logger,
+        allowDevelopmentFallback);
+}
+
+static async Task<bool> SendEmailAsync(string email, string subject, string body, IConfiguration configuration, ILogger logger, bool allowDevelopmentFallback)
 {
     var host = configuration["Email:SmtpHost"];
-    if (string.IsNullOrWhiteSpace(host))
+    var from = configuration["Email:From"] ?? configuration["Email:Username"];
+    if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(from))
     {
-        logger.LogWarning("Email verification is not configured. Code for {Email}: {Code}", email, code);
-        return false;
+        if (allowDevelopmentFallback)
+            logger.LogWarning("SMTP is not configured. Development email for {Email}: {Body}", email, body);
+        else
+            logger.LogError("SMTP host and sender must be configured to send account emails.");
+        return allowDevelopmentFallback;
     }
 
     try
     {
+        var senderAddress = new MailAddress(from).Address;
+        var senderName = configuration["Email:FromName"]?.Trim() is { Length: > 0 } displayName
+            ? displayName
+            : "Erasmus With Us";
+        var sender = new MailAddress(senderAddress, senderName, Encoding.UTF8);
         using var client = new SmtpClient(host, configuration.GetValue<int?>("Email:SmtpPort") ?? 587)
         {
             EnableSsl = configuration.GetValue("Email:EnableSsl", true),
             Credentials = new NetworkCredential(configuration["Email:Username"], configuration["Email:Password"])
         };
-        var from = configuration["Email:From"] ?? configuration["Email:Username"];
-        using var message = new MailMessage(from!, email)
+        using var message = new MailMessage(sender, new MailAddress(email))
         {
-            Subject = "Your ErasmusWithUs verification code",
-            Body = $"Your six-letter ErasmusWithUs verification code is: {code}\n\nIt expires in 15 minutes."
+            Subject = subject,
+            Body = body
         };
         await client.SendMailAsync(message);
         return true;
     }
-    catch (SmtpException exception)
+    catch (Exception exception) when (exception is SmtpException or ArgumentException or FormatException or InvalidOperationException)
     {
-        logger.LogError(exception, "Could not send verification email to {Email}", email);
+        logger.LogError(exception, "Could not send account email to {Email}", email);
         return false;
     }
 }
@@ -654,7 +1096,12 @@ static UserResponse ToUserResponse(UserEntity user)
         System.Text.Json.JsonSerializer.Deserialize<string[]>(user.PreferredCountriesJson) ?? [],
         System.Text.Json.JsonSerializer.Deserialize<string[]>(user.LanguagesJson) ?? [],
         user.EmailVerified,
-        user.CreatedAt);
+        user.CreatedAt,
+        user.HomeUniversity,
+        user.Intake,
+        user.Bio,
+        user.CommunityVisible,
+        user.ProfilePhotoDataUrl);
 }
 
 record RegisterRequest(string Email, string Password, string DisplayName);
@@ -664,11 +1111,25 @@ record ResetPasswordRequest(string Email, string Token, string NewPassword);
 record EmailVerificationRequest(string Email);
 record VerifyEmailRequest(string Email, string Token);
 record UpdateProfileRequest(string? DisplayName, string? Country, string? StudyField, string? Level, double? Gpa,
-    string[] PreferredCountries, string[] Languages);
+    string[] PreferredCountries, string[] Languages, string? HomeUniversity = null, string? Intake = null,
+    string? Bio = null, bool? CommunityVisible = null, string? ProfilePhotoDataUrl = null,
+    bool RemoveProfilePhoto = false);
 record UserResponse(int Id, string Email, string DisplayName, string? Country, string? StudyField,
     string? Level, double? Gpa, string[] PreferredCountries, string[] Languages, bool EmailVerified,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt, string? HomeUniversity, string? Intake, string? Bio, bool CommunityVisible,
+    string? ProfilePhotoDataUrl);
 record AuthResponse(string Token, UserResponse User, bool VerificationRequired = false, string? VerificationCode = null);
+record CreateStudentPlanRequest(int OpportunityId, string? Intake);
+record StudentPlanResponse(int Id, int OpportunityId, string University, string Intake, DateTimeOffset CreatedAt);
+record StudentCardResponse(int Id, string DisplayName, string? HomeUniversity, string? StudyField,
+    string? Level, string? Intake, string? Bio, string? ProfilePhotoDataUrl);
+record StartConversationRequest(int RecipientUserId, int OpportunityId, string? Intake);
+record SendMessageRequest(string? Content);
+record MessageResponse(int Id, int SenderUserId, string Content, DateTimeOffset CreatedAt);
+record MessagePreview(string Content, DateTimeOffset CreatedAt);
+record ConversationSummaryResponse(int Id, int OtherUserId, string OtherDisplayName, string? OtherHomeUniversity,
+    string? OtherProfilePhotoDataUrl, string University, string Intake, string? LastMessage,
+    DateTimeOffset? LastMessageAt, DateTimeOffset CreatedAt);
 
 record StudentProfile(
     string? HomeUniversity,
@@ -800,7 +1261,7 @@ static class SeedData
 {
     public static string GenerateToken()
     {
-        return Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        return Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     }
 
     public static readonly ErasmusOpportunity[] Opportunities =
