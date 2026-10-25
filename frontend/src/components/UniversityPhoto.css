@@ -1,0 +1,74 @@
+.university-photo-wrap {
+  flex: 0 0 70px;
+  width: 70px;
+  align-self: flex-start;
+}
+
+.university-photo,
+.university-photo-placeholder {
+  display: grid;
+  width: 70px;
+  height: 70px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--muted);
+}
+
+.university-photo {
+  position: relative;
+  text-decoration: none;
+}
+
+.university-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.university-photo span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  padding: 3px 4px;
+  background: rgba(13, 28, 32, 0.78);
+  color: white;
+  font-size: 7px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.university-photo-placeholder {
+  background: linear-gradient(145deg, var(--paper), rgba(13, 106, 104, 0.1));
+}
+
+html[data-theme='dark'] .university-photo,
+html[data-theme='dark'] .university-photo-placeholder {
+  background-color: var(--panel);
+}
+
+@media (max-width: 600px) {
+  .university-page .university-card-head {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .university-photo-wrap,
+  .university-photo,
+  .university-photo-placeholder {
+    width: 56px;
+  }
+
+  .university-photo-wrap {
+    flex-basis: 56px;
+  }
+
+  .university-photo,
+  .university-photo-placeholder {
+    height: 56px;
+  }
+}

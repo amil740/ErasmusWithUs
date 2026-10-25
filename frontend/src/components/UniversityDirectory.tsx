@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ArrowUpRight, ChevronDown, ExternalLink, MapPin, Search, Users } from 'lucide-react'
 import FeaturedCampuses from './FeaturedCampuses'
+import UniversityPhoto from './UniversityPhoto'
 import type { ErasmusOpportunity } from '../types/erasmus'
 
 export default function UniversityDirectory({ opportunities, onFindPeers }: {
@@ -47,10 +48,9 @@ export default function UniversityDirectory({ opportunities, onFindPeers }: {
 
     <div className="university-list">{filtered.map((item) => {
       const expanded = expandedId === item.id
-      const initials = item.university.split(' ').map((word) => word[0]).join('').slice(0, 2)
       return <article className="university-card" key={item.id}>
         <div className="university-card-head">
-          <div className="uni-monogram">{initials}</div>
+          <UniversityPhoto key={item.university} university={item.university} />
           <div className="university-card-title"><span className={'verification ' + (item.verificationStatus === 'Verified' ? 'verified' : 'review')}><span />{item.verificationStatus === 'Verified' ? 'Source reviewed' : 'Needs review'}</span>
             <h3>{item.university}</h3><span className="location"><MapPin size={14} />{item.city}, {item.country}</span>
           </div>
