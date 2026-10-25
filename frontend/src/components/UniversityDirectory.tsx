@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { ArrowUpRight, ChevronDown, ExternalLink, MapPin, Search, Users } from 'lucide-react'
+import FeaturedCampuses from './FeaturedCampuses'
 import type { ErasmusOpportunity } from '../types/erasmus'
 
 export default function UniversityDirectory({ opportunities, onFindPeers }: {
@@ -35,6 +36,8 @@ export default function UniversityDirectory({ opportunities, onFindPeers }: {
         <div><strong>€{averageGrant}</strong><span>average monthly grant</span></div>
       </div>
     </div>
+
+    <FeaturedCampuses />
 
     <div className="university-toolbar">
       <label className="search-box"><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search university, city, or field…" aria-label="Search universities" /></label>
