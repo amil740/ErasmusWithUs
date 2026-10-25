@@ -12,6 +12,7 @@ export default function RootLayout() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="match" />
       <Stack.Screen name="budget" />
+      <Stack.Screen name="assistant" />
       <Stack.Screen name="opportunity/[id]" />
       <Stack.Screen name="students/[opportunityId]" />
       <Stack.Screen name="conversation/[id]" />

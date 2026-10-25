@@ -6,7 +6,7 @@ import {
 import './App.css'
 import CommunityPanel from './components/CommunityPanel'
 import OpportunityCard from './components/OpportunityCard'
-import { BudgetPlannerPanel, ComparePanel, DeadlineRemindersPanel, PlannerPanel, StudentStoriesPanel } from './components/WorkspacePanels'
+import { AssistantPanel, BudgetPlannerPanel, ComparePanel, DeadlineRemindersPanel, PlannerPanel, StudentStoriesPanel } from './components/WorkspacePanels'
 import UniversityDirectory from './components/UniversityDirectory'
 import { getLanguageLocale, interfaceLanguages, usePreferences } from './preferences'
 import {
@@ -736,7 +736,7 @@ function App() {
         <div className="sidebar-label">{t('Workspace')}</div>
         <nav className="nav-list">
           {[
-            ['Discover', Compass], ['Universities', Building2], ['Find my match', Sparkles],
+            ['Discover', Compass], ['Universities', Building2], ['Find my match', Sparkles], ['Assistant', MessageCircle],
             ['Community', Users], ['Compare', SlidersHorizontal], ['Shortlist', Bookmark],
             ['Planner', Check], ['Budget', Calculator], ['Reminders', Bell], ['Student stories', BookOpen], ['My account', UserRound],
           ].map(([label, Icon]) => (
@@ -813,6 +813,7 @@ function App() {
           }}>{!currentUser || profileProgress < 75 ? t('Build my profile') : saved.length === 0 ? t('Browse destinations') : t('Compare shortlist')} <ArrowUpRight size={14} /></button>
         </section>}
 
+        {activeNav === 'Assistant' && <AssistantPanel />}
         {activeNav === 'Compare' && <ComparePanel opportunities={savedOpportunities} onBrowse={() => handleNav('Discover')} />}
         {activeNav === 'Planner' && <PlannerPanel opportunities={opportunities} user={currentUser} onSignIn={() => setAuthMode(currentUser ? 'verify-code' : 'login')} />}
         {activeNav === 'Budget' && <BudgetPlannerPanel opportunities={opportunities} />}

@@ -1,34 +1,75 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ArrowUpRight, Bell, CalendarDays, Calculator, Check, ClipboardList, MessageSquareQuote, Plus, Star } from 'lucide-react'
-import { answerOpportunityQuestion, askOpportunityQuestion, createStudentPlan, getOpportunityQuestions, getStudentPlans, getStudentExperiences, saveStudentExperience, updateStudentPlan } from '../lib/api'
+import { ArrowUpRight, Bell, CalendarDays, Calculator, Check, ClipboardList, MessageSquareQuote, Plus, Star, TrendingDown, WalletCards } from 'lucide-react'
+import { answerOpportunityQuestion, askAssistant, askOpportunityQuestion, createStudentPlan, getOpportunityQuestions, getStudentPlans, getStudentExperiences, saveStudentExperience, updateStudentPlan } from '../lib/api'
 import type { DeadlineReminder, ErasmusOpportunity, ExperienceSummary, OpportunityQuestion, StudentPlan, User } from '../types/erasmus'
 import { getLanguageLocale, usePreferences } from '../preferences'
+
+export function AssistantPanel() {
+  const { t } = usePreferences()
+  const [message, setMessage] = useState('')
+  const [answer, setAnswer] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!message.trim()) return
+    setBusy(true); setError('')
+    try {
+      setAnswer((await askAssistant(message.trim())).answer)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The assistant is unavailable.')
+    } finally { setBusy(false) }
+  }
+
+  return <section className="workspace-panel assistant-page">
+    <span className="section-kicker">{t('PLAN WITH CONFIDENCE')}</span>
+    <h2>{t('Ask the Erasmus assistant.')}</h2>
+    <p>{t('Get a practical shortlist or budget sanity check. Verify final deadlines, grants, and eligibility with official university sources.')}</p>
+    <form className="assistant-form" onSubmit={(event) => { void submit(event) }}>
+      <textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder={t('Example: I study Computer Science, have EUR 650 per month, and want a safe city with strong student life.')} rows={5} />
+      <button className="primary-button" type="submit" disabled={busy || !message.trim()}>{busy ? t('Thinking…') : t('Ask assistant')} <ArrowUpRight size={15} /></button>
+    </form>
+    {error && <p className="inline-error" role="alert">{t(error)}</p>}
+    {answer && <div className="assistant-answer"><span className="section-kicker">{t('ASSISTANT')}</span><p>{answer}</p></div>}
+  </section>
+}
 
 export function ComparePanel({ opportunities, onBrowse }: { opportunities: ErasmusOpportunity[]; onBrowse: () => void }) {
   const { t, language } = usePreferences()
   const compared = opportunities.slice(0, 3)
+  const bestValue = compared.length ? [...compared].sort((a, b) => (a.studentBudgetEstimate - a.monthlyGrant) - (b.studentBudgetEstimate - b.monthlyGrant))[0] : null
+  const bestGrant = compared.length ? [...compared].sort((a, b) => b.monthlyGrant - a.monthlyGrant)[0] : null
+  const soonestDeadline = compared.length ? [...compared].sort((a, b) => a.deadline.localeCompare(b.deadline))[0] : null
+  const formatDate = (value: string) => new Date(value).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
 
   return <section className="workspace-panel">
-    <span className="section-kicker">{t('COMPARE DESTINATIONS')}</span>
-    <h2>{t('Compare your saved choices.')}</h2>
+    <div className="compare-heading"><div><span className="section-kicker">{t('COMPARE DESTINATIONS')}</span><h2>{t('Compare your saved choices.')}</h2><p>{t('See the decision-making details at a glance, from monthly affordability to application timing.')}</p></div><span className="compare-count">{compared.length}/3 {t('destinations')}</span></div>
     {compared.length < 2 ? <>
       <p>{t('Save at least two destinations to compare GPA requirements, grants, monthly costs, and deadlines side by side.')}</p>
       <button className="primary-button" onClick={onBrowse}>{t('Discover destinations')} <ArrowUpRight size={15} /></button>
-    </> : <div className="compare-table-wrap">
+    </> : <>
+      <div className="compare-insights">
+        <div className="compare-insight"><span><TrendingDown size={15} />{t('Best monthly value')}</span><strong>{bestValue?.university}</strong><small>€{Math.max(0, (bestValue?.studentBudgetEstimate ?? 0) - (bestValue?.monthlyGrant ?? 0))} {t('estimated gap')}</small></div>
+        <div className="compare-insight"><span><WalletCards size={15} />{t('Highest grant')}</span><strong>{bestGrant?.university}</strong><small>€{bestGrant?.monthlyGrant} / {t('month')}</small></div>
+        <div className="compare-insight"><span><CalendarDays size={15} />{t('Soonest deadline')}</span><strong>{soonestDeadline?.university}</strong><small>{soonestDeadline ? formatDate(soonestDeadline.deadline) : ''}</small></div>
+      </div>
+      <div className="compare-table-wrap">
       <table className="compare-table">
-        <thead><tr><th scope="col">{t('Details')}</th>{compared.map((item) => <th scope="col" key={item.id}>{item.university}<small>{item.city}, {item.country}</small></th>)}</tr></thead>
+        <thead><tr><th scope="col">{t('Details')}</th>{compared.map((item) => <th scope="col" key={item.id}><span className="compare-university">{item.university}</span><small>{item.city}, {item.country}</small><em className={item.id === bestValue?.id ? 'compare-badge positive' : 'compare-badge'}>{item.id === bestValue?.id ? t('Best value') : item.verificationStatus === 'Verified' ? t('Verified') : t('Review')}</em></th>)}</tr></thead>
         <tbody>
-          <tr><th scope="row">{t('Minimum GPA')}</th>{compared.map((item) => <td key={item.id}>{item.minimumGpa.toFixed(1)}</td>)}</tr>
-          <tr><th scope="row">{t('Grant / month')}</th>{compared.map((item) => <td key={item.id}>EUR {item.monthlyGrant}</td>)}</tr>
-          <tr><th scope="row">{t('Estimated monthly cost')}</th>{compared.map((item) => <td key={item.id}>EUR {item.studentBudgetEstimate}</td>)}</tr>
+          <tr><th scope="row">{t('Minimum GPA')}</th>{compared.map((item) => <td key={item.id}><strong>{item.minimumGpa.toFixed(1)}</strong></td>)}</tr>
+          <tr><th scope="row">{t('Grant / month')}</th>{compared.map((item) => <td key={item.id}><strong className="value-positive">€{item.monthlyGrant}</strong></td>)}</tr>
+          <tr><th scope="row">{t('Estimated monthly cost')}</th>{compared.map((item) => <td key={item.id}><strong>€{item.studentBudgetEstimate}</strong><small className="table-muted">{t('rent + basics')}</small></td>)}</tr>
+          <tr><th scope="row">{t('After grant')}</th>{compared.map((item) => <td key={item.id}><strong className={item.studentBudgetEstimate - item.monthlyGrant <= 0 ? 'value-positive' : 'value-warning'}>€{Math.max(0, item.studentBudgetEstimate - item.monthlyGrant)}</strong><small className="table-muted">{item.studentBudgetEstimate - item.monthlyGrant <= 0 ? t('covered in estimate') : t('to cover monthly')}</small></td>)}</tr>
           <tr><th scope="row">{t('Study fields')}</th>{compared.map((item) => <td key={item.id}>{item.studyFields.map(t).join(', ')}</td>)}</tr>
           <tr><th scope="row">{t('Teaching languages')}</th>{compared.map((item) => <td key={item.id}>{item.languages.map(t).join(', ')}</td>)}</tr>
-          <tr><th scope="row">{t('Deadline')}</th>{compared.map((item) => <td key={item.id}>{new Date(item.deadline).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</td>)}</tr>
-          <tr><th scope="row">{t('Source status')}</th>{compared.map((item) => <td key={item.id}>{t(item.verificationStatus === 'Verified' ? 'Verified' : 'Needs review')}</td>)}</tr>
-          <tr><th scope="row">{t('Last checked')}</th>{compared.map((item) => <td key={item.id}>{new Date(item.lastVerifiedAt).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</td>)}</tr>
+          <tr><th scope="row">{t('Deadline')}</th>{compared.map((item) => <td key={item.id}><strong>{formatDate(item.deadline)}</strong></td>)}</tr>
+          <tr><th scope="row">{t('Last checked')}</th>{compared.map((item) => <td key={item.id}>{formatDate(item.lastVerifiedAt)}</td>)}</tr>
         </tbody>
       </table>
-    </div>}
+      </div>
+    </>}
   </section>
 }
 
@@ -195,15 +236,19 @@ export function BudgetPlannerPanel({ opportunities }: { opportunities: ErasmusOp
   const monthlyCost = costs.rent + costs.living + costs.extras
   const firstMonthGap = monthlyCost + costs.moveIn - selected.monthlyGrant
   const remainingBudget = costs.personalBudget - Math.max(0, firstMonthGap)
+  const coverage = monthlyCost > 0 ? Math.min(100, Math.round(selected.monthlyGrant / monthlyCost * 100)) : 0
+  const costParts = [['rent', 'Rent / housing', costs.rent, '#0d6a68'], ['living', 'Food, transport & basics', costs.living, '#2c8a6d'], ['extras', 'Other monthly costs', costs.extras, '#f0b65d']] as const
 
   return <section className="budget-page">
     <div className="budget-heading"><span className="section-kicker">{t('BUDGET PLANNER')}</span><h2>{t('Know what you may need each month.')}</h2><p>{t('Use your own estimates alongside the listed grant and city cost figures. All amounts are monthly EUR estimates.')}</p></div>
+    <div className="budget-kpis"><div><span>{t('Monthly estimate')}</span><strong>€{monthlyCost.toLocaleString()}</strong><small>{t('your planned baseline')}</small></div><div><span>{t('Grant coverage')}</span><strong>{coverage}%</strong><small>{t('of monthly costs')}</small></div><div className={firstMonthGap > 0 ? 'warning' : 'positive'}><span>{t('Monthly gap')}</span><strong>€{Math.max(0, monthlyCost - selected.monthlyGrant).toLocaleString()}</strong><small>{t('after listed grant')}</small></div><div className={remainingBudget < 0 ? 'warning' : 'positive'}><span>{t('First-month buffer')}</span><strong>{remainingBudget < 0 ? `− €${Math.abs(remainingBudget).toLocaleString()}` : `€${remainingBudget.toLocaleString()}`}</strong><small>{t('after arrival costs')}</small></div></div>
     <div className="budget-layout">
       <article className="budget-editor">
         <label>{t('Destination university')}<select value={selected.id} onChange={(event) => setSelectedId(Number(event.target.value))}>{opportunities.map((item) => <option value={item.id} key={item.id}>{item.university} · {item.country}</option>)}</select></label>
         <div className="budget-input-grid">
           {([['rent', 'Rent / housing'], ['living', 'Food, transport & basics'], ['extras', 'Other monthly costs'], ['moveIn', 'One-time arrival costs'], ['personalBudget', 'My first-month funds']] as const).map(([field, label]) => <label key={field}>{t(label)}<span className="currency-input"><b>€</b><input type="number" min="0" max="20000" value={costs[field]} onChange={(event) => updateCost(field, event.target.value)} /></span></label>)}
         </div>
+        <div className="budget-breakdown"><div className="budget-breakdown-head"><strong>{t('Monthly cost breakdown')}</strong><span>€{monthlyCost.toLocaleString()}</span></div><div className="budget-bar">{costParts.map(([key, label, value, color]) => <i key={key} style={{ width: `${monthlyCost ? value / monthlyCost * 100 : 0}%`, background: color }} title={`${t(label)}: €${value}`} />)}</div><div className="budget-legend">{costParts.map(([key, label, value, color]) => <span key={key}><i style={{ background: color }} />{t(label)} <b>€{value.toLocaleString()}</b></span>)}</div></div>
         <div className="budget-summary">
           <div><span>{t('Your estimated monthly costs')}</span><strong>€{monthlyCost.toLocaleString()}</strong></div>
           <div><span>{t('One-time arrival and deposit costs')}</span><strong>+ €{costs.moveIn.toLocaleString()}</strong></div>

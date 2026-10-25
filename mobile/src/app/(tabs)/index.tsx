@@ -34,6 +34,7 @@ export default function ExploreScreen() {
     <Card style={styles.profileCard}><View style={styles.profileCopy}><Text style={styles.sectionEyebrow}>START WITH YOU</Text><Text style={styles.profileTitle}>Build your exchange profile</Text><Text style={styles.profileSubtitle}>Add your field and term to help other students find you.</Text></View><Pressable onPress={() => router.push('/(tabs)/profile')} style={styles.profileAction}><Text style={styles.profileArrow}>↗</Text></Pressable></Card>
 
     <Pressable onPress={() => router.push('/match')} style={({ pressed }) => [styles.matchCard, pressed && { opacity: 0.82 }]}><View style={styles.matchMark}><Text style={styles.matchMarkText}>✦</Text></View><View style={styles.matchCopy}><Text style={styles.matchEyebrow}>PERSONALIZED FOR YOU</Text><Text style={styles.matchTitle}>Find your best match</Text><Text style={styles.matchSubtitle}>Compare study fit, costs and grants across destinations.</Text></View><Text style={styles.matchArrow}>→</Text></Pressable>
+    <Pressable onPress={() => router.push('/assistant')} style={({ pressed }) => [styles.assistantCard, pressed && { opacity: 0.82 }]}><View style={styles.assistantCopy}><Text style={styles.assistantEyebrow}>NEW</Text><Text style={styles.assistantTitle}>Ask the Erasmus assistant</Text><Text style={styles.assistantSubtitle}>Turn your budget, field and lifestyle priorities into a practical shortlist.</Text></View><Text style={styles.matchArrow}>→</Text></Pressable>
 
     <PageHeading eyebrow="A few places to begin" title="Featured destinations" subtitle="Real exchange options, all in one place." action={<Pressable onPress={() => router.push('/(tabs)/universities')}><Text style={styles.seeAll}>See all →</Text></Pressable>} />
     {error ? <ErrorBanner message={error} onRetry={() => { setLoading(true); setError(''); void getOpportunities().then(setOpportunities).catch((caught) => setError(caught instanceof Error ? caught.message : 'Could not load opportunities.')).finally(() => setLoading(false)) }} /> : null}
@@ -78,4 +79,9 @@ const styles = StyleSheet.create({
   matchTitle: { color: colors.ink, fontSize: 15, fontWeight: '800' },
   matchSubtitle: { color: colors.muted, fontSize: 10, lineHeight: 15 },
   matchArrow: { color: colors.greenDark, fontSize: 20, fontWeight: '800' },
+  assistantCard: { backgroundColor: '#FFF8E8', borderRadius: radius.medium, borderWidth: 1, borderColor: '#F1E2B9', padding: 15, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  assistantCopy: { flex: 1, gap: 3 },
+  assistantEyebrow: { color: '#A17A24', fontSize: 8, fontWeight: '800', letterSpacing: 0.9 },
+  assistantTitle: { color: colors.ink, fontSize: 15, fontWeight: '800' },
+  assistantSubtitle: { color: colors.muted, fontSize: 10, lineHeight: 15 },
 })

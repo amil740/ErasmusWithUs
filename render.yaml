@@ -35,6 +35,12 @@ services:
         value: /var/data/erasmuswithus.db
       - key: CatalogReview__Key
         sync: false
+      - key: AI__Endpoint
+        sync: false
+      - key: AI__ApiKey
+        sync: false
+      - key: AI__Model
+        value: gpt-4o-mini
 
   - type: web
     name: erasmuswithus-frontend

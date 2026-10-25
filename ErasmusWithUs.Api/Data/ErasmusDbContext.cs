@@ -18,6 +18,7 @@ public sealed class ErasmusDbContext(DbContextOptions<ErasmusDbContext> options)
     public DbSet<CatalogCorrectionEntity> CatalogCorrections => Set<CatalogCorrectionEntity>();
     public DbSet<OpportunityQuestionEntity> OpportunityQuestions => Set<OpportunityQuestionEntity>();
     public DbSet<OpportunityAnswerEntity> OpportunityAnswers => Set<OpportunityAnswerEntity>();
+    public DbSet<PushDeviceEntity> PushDevices => Set<PushDeviceEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -50,5 +51,8 @@ public sealed class ErasmusDbContext(DbContextOptions<ErasmusDbContext> options)
             .HasIndex(item => new { item.OpportunityId, item.CreatedAt });
         modelBuilder.Entity<CatalogCorrectionEntity>()
             .HasIndex(item => new { item.Status, item.CreatedAt });
+        modelBuilder.Entity<PushDeviceEntity>()
+            .HasIndex(item => new { item.UserId, item.ExpoPushToken })
+            .IsUnique();
     }
 }

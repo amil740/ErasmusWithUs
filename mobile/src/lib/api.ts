@@ -14,6 +14,7 @@ import type {
   OpportunityQuestion,
   User,
 } from './types'
+import { cacheOpportunities, readCachedOpportunities } from './offline-cache'
 
 export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || 'https://erasmuswithus-api.onrender.com').replace(/\/$/, '')
 
@@ -56,7 +57,37 @@ export function getOpportunities(params: { search?: string; country?: string } =
   if (params.country) query.set('country', params.country)
   const queryString = query.toString()
   const suffix = queryString ? `?${queryString}` : ''
+  const cacheKey = `opportunities:${query.toString()}`
   return request<Opportunity[]>(`/api/opportunities${suffix}`)
+    .then(async (result) => {
+      await cacheOpportunities(cacheKey, result).catch(() => undefined)
+      return result
+    })
+    .catch(async (error) => {
+      const cached = await readCachedOpportunities(cacheKey).catch(() => null)
+      if (cached) return cached
+      throw error
+    })
+}
+
+export function registerPushDevice(token: string, expoPushToken: string, platform: string) {
+  return request<{ registered: boolean }>('/api/notifications/devices', token, {
+    method: 'POST',
+    body: JSON.stringify({ expoPushToken, platform }),
+  })
+}
+
+export function unregisterPushDevice(token: string, expoPushToken: string) {
+  return request<void>(`/api/notifications/devices?expoPushToken=${encodeURIComponent(expoPushToken)}`, token, {
+    method: 'DELETE',
+  })
+}
+
+export function askAssistant(message: string) {
+  return request<{ answer: string }>('/api/assistant/recommend', undefined, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  })
 }
 
 export function getOpportunity(id: number) {

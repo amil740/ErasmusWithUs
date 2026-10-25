@@ -1,6 +1,8 @@
 import * as SecureStore from 'expo-secure-store'
+import { Platform } from 'react-native'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ApiError, getMe } from '../lib/api'
+import { ApiError, getMe, registerPushDevice, unregisterPushDevice } from '../lib/api'
+import { getExpoPushToken } from '../lib/notifications'
 import type { User } from '../lib/types'
 
 const TOKEN_KEY = 'erasmuswithus.session-token'
@@ -41,6 +43,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => { if (active) setBooting(false) })
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    if (!token || !user?.emailVerified) return
+    let active = true
+    let registeredToken: string | null = null
+    void getExpoPushToken()
+      .then(async (pushToken) => {
+        if (!active || !pushToken) return
+        registeredToken = pushToken
+        await registerPushDevice(token, pushToken, Platform.OS).catch(() => undefined)
+      })
+    return () => {
+      active = false
+      if (registeredToken) void unregisterPushDevice(token, registeredToken).catch(() => undefined)
+    }
+  }, [token, user?.emailVerified])
 
   const acceptSession = useCallback(async (nextToken: string, nextUser: User) => {
     await SecureStore.setItemAsync(TOKEN_KEY, nextToken)

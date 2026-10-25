@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Mail;
 using System.Text;
+using System.Net.Http.Json;
 using ErasmusWithUs.Api.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -58,10 +59,16 @@ public sealed class DeadlineReminderWorker(
                     "Open Erasmus With Us to review the destination and your application plan.\n\n" +
                     "Erasmus With Us";
 
-                if (!await SendEmailAsync(user.Email, opportunity.University, body, cancellationToken)) continue;
+                var emailSent = await SendEmailAsync(user.Email, opportunity.University, body, cancellationToken);
+                var pushSent = await SendPushNotificationsAsync(database, user.Id,
+                    $"Deadline reminder · {opportunity.University}",
+                    $"The listed application deadline is {deadline:dd MMM yyyy} ({daysUntilDeadline} days from today).",
+                    cancellationToken);
+                if (!emailSent && !pushSent) continue;
                 reminder.SentAt = DateTimeOffset.UtcNow;
                 await database.SaveChangesAsync(cancellationToken);
             }
+
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -71,6 +78,40 @@ public sealed class DeadlineReminderWorker(
         {
             logger.LogError(exception, "Deadline reminder delivery failed.");
         }
+    }
+
+    private static async Task<bool> SendPushNotificationsAsync(
+        ErasmusDbContext database,
+        int userId,
+        string title,
+        string body,
+        CancellationToken cancellationToken)
+    {
+        var devices = await database.PushDevices
+            .Where(item => item.UserId == userId)
+            .ToListAsync(cancellationToken);
+        if (devices.Count == 0) return false;
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        var sent = false;
+        foreach (var device in devices)
+        {
+            using var response = await client.PostAsJsonAsync(
+                "https://exp.host/--/api/v2/push/send",
+                new
+                {
+                    to = device.ExpoPushToken,
+                    title,
+                    body,
+                    data = new { type = "deadline" }
+                },
+                cancellationToken);
+            if (response.IsSuccessStatusCode)
+                sent = true;
+            else if ((int)response.StatusCode is >= 400 and <= 499)
+                database.PushDevices.Remove(device);
+        }
+        return sent;
     }
 
     private async Task<bool> SendEmailAsync(string email, string university, string body, CancellationToken cancellationToken)

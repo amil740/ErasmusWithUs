@@ -26,6 +26,13 @@ export function getOpportunities(params: { search?: string; country?: string; le
   return request<ErasmusOpportunity[]>(`/api/opportunities?${query.toString()}`)
 }
 
+export function askAssistant(message: string) {
+  return request<{ answer: string }>('/api/assistant/recommend', {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  })
+}
+
 export function getMatches(profile: StudentProfile) {
   return request<MatchResult[]>('/api/matching', {
     method: 'POST',

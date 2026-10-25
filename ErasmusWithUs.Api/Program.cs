@@ -122,6 +122,7 @@ using (var scope = app.Services.CreateScope())
     EnsureAuthColumns(database);
     EnsureCommunityTables(database);
     EnsureFeatureTables(database);
+    EnsurePushTables(database);
 
     var existingOpportunityIds = database.Opportunities.Select(item => item.Id).ToHashSet();
     var missingOpportunities = SeedData.AllOpportunities
@@ -778,6 +779,89 @@ app.MapPost("/api/community/conversations/{id:int}/messages", async (int id, Sen
 }).RequireAuthorization().RequireRateLimiting("community-message");
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", service = "ErasmusWithUs.Api" }));
+
+app.MapPost("/api/notifications/devices", async (RegisterPushDeviceRequest request,
+    ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || string.IsNullOrWhiteSpace(request.ExpoPushToken) ||
+        !request.ExpoPushToken.StartsWith("ExponentPushToken[", StringComparison.Ordinal))
+        return Results.BadRequest(new { message = "A valid Expo push token is required." });
+
+    var token = request.ExpoPushToken.Trim();
+    var device = await database.PushDevices.SingleOrDefaultAsync(item =>
+        item.UserId == userId.Value && item.ExpoPushToken == token);
+    if (device is null)
+    {
+        device = new PushDeviceEntity
+        {
+            UserId = userId.Value,
+            ExpoPushToken = token,
+            Platform = request.Platform?.Trim() is { Length: > 0 } platform ? platform : "unknown"
+        };
+        database.PushDevices.Add(device);
+    }
+    else
+    {
+        device.Platform = request.Platform?.Trim() is { Length: > 0 } platform ? platform : device.Platform;
+        device.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    await database.SaveChangesAsync();
+    return Results.Ok(new { registered = true });
+}).RequireAuthorization();
+
+app.MapDelete("/api/notifications/devices", async (string? expoPushToken,
+    ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || string.IsNullOrWhiteSpace(expoPushToken))
+        return Results.BadRequest(new { message = "A push token is required." });
+
+    var device = await database.PushDevices.SingleOrDefaultAsync(item =>
+        item.UserId == userId.Value && item.ExpoPushToken == expoPushToken.Trim());
+    if (device is not null)
+    {
+        database.PushDevices.Remove(device);
+        await database.SaveChangesAsync();
+    }
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/assistant/recommend", async (AssistantRequest request, IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Message))
+        return Results.BadRequest(new { message = "Tell the assistant what you want to compare." });
+
+    var endpoint = configuration["AI:Endpoint"];
+    var apiKey = configuration["AI:ApiKey"];
+    var model = configuration["AI:Model"] ?? "gpt-4o-mini";
+    if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(apiKey))
+        return Results.Problem("The AI assistant is not configured. Set AI:Endpoint, AI:ApiKey and AI:Model.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+    var payload = new
+    {
+        model,
+        temperature = 0.2,
+        messages = new[]
+        {
+            new { role = "system", content = "You are Erasmus With Us assistant. Give concise, practical advice. Never invent deadlines, grants, or eligibility rules. Ask the user to verify official university sources." },
+            new { role = "user", content = request.Message }
+        }
+    };
+    using var response = await client.PostAsJsonAsync(endpoint.TrimEnd('/') + "/chat/completions", payload, cancellationToken);
+    var body = await response.Content.ReadFromJsonAsync<AiCompletionResponse>(cancellationToken: cancellationToken);
+    var answer = body?.Choices?.FirstOrDefault()?.Message?.Content;
+    if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(answer))
+        return Results.Problem("The AI assistant provider did not return a usable response.",
+            statusCode: StatusCodes.Status502BadGateway);
+
+    return Results.Ok(new { answer = answer.Trim() });
+}).RequireRateLimiting("auth");
 
 app.MapGet("/api/opportunities", (string? search, string? country, string? studyField, string? level) =>
 {
@@ -1659,6 +1743,25 @@ static void EnsureFeatureTables(ErasmusDbContext database)
         """);
 }
 
+static void EnsurePushTables(ErasmusDbContext database)
+{
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS PushDevices (
+            Id INTEGER NOT NULL CONSTRAINT PK_PushDevices PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            ExpoPushToken TEXT NOT NULL,
+            Platform TEXT NOT NULL DEFAULT 'unknown',
+            CreatedAt TEXT NOT NULL,
+            UpdatedAt TEXT NOT NULL,
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_PushDevices_UserId_ExpoPushToken
+        ON PushDevices (UserId, ExpoPushToken)
+        """);
+}
+
 static string[] DeserializeStringArray(string json)
 {
     try
@@ -1826,6 +1929,11 @@ record MessagePreview(string Content, DateTimeOffset CreatedAt);
 record ConversationSummaryResponse(int Id, int OtherUserId, string OtherDisplayName, string? OtherHomeUniversity,
     string? OtherProfilePhotoDataUrl, string University, string Intake, string? LastMessage,
     DateTimeOffset? LastMessageAt, DateTimeOffset CreatedAt, int UnreadCount = 0, bool IsBlocked = false);
+record RegisterPushDeviceRequest(string? ExpoPushToken, string? Platform);
+record AssistantRequest(string? Message);
+record AiCompletionResponse(AiChoice[]? Choices);
+record AiChoice(AiMessage? Message);
+record AiMessage(string? Content);
 
 record StudentProfile(
     string? HomeUniversity,
