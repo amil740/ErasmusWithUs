@@ -2992,14 +2992,14 @@ html[data-theme='dark'] .assistant-next-step {
 }
 
 .university-details strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .university-details p,
 .university-details li {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -3011,7 +3011,30 @@ html[data-theme='dark'] .assistant-next-step {
 .university-note,
 .university-reviewed {
   color: var(--muted);
-  font-size: 9px;
+  font-size: 10px;
+}
+
+html[data-theme='dark'] .university-details {
+  background: #223230;
+  color: #e5efeb;
+}
+
+html[data-theme='dark'] .university-details p,
+html[data-theme='dark'] .university-details li,
+html[data-theme='dark'] .university-note,
+html[data-theme='dark'] .university-reviewed,
+html[data-theme='dark'] .housing-links a small {
+  color: #c1d2cb;
+}
+
+html[data-theme='dark'] .housing-links a {
+  border-color: rgba(131, 212, 196, 0.3);
+  background: #1b2928;
+}
+
+html[data-theme='dark'] .university-reminder {
+  background: #162321;
+  border-color: rgba(196, 220, 211, 0.2);
 }
 
 .university-footnote {
