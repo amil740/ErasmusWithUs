@@ -33,6 +33,8 @@ services:
         value: https://erasmuswithus-frontend.onrender.com
       - key: Database__Path
         value: /var/data/erasmuswithus.db
+      - key: CatalogReview__Key
+        sync: false
 
   - type: web
     name: erasmuswithus-frontend

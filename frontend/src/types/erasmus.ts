@@ -48,6 +48,14 @@ export type MatchResult = {
   score: number
   reasons: string[]
   breakdown: MatchFactor[]
+  eligibility?: EligibilityAssessment
+}
+
+export type EligibilityAssessment = {
+  meetsPublishedRequirements: boolean
+  hasEnoughProfileData: boolean
+  agreementVerified: boolean
+  reasons: string[]
 }
 
 export type MatchFactor = {
@@ -73,6 +81,7 @@ export type User = {
   bio?: string | null
   communityVisible?: boolean
   profilePhotoDataUrl?: string | null
+  roommateSearch?: boolean
 }
 
 export type StudentPlan = {
@@ -81,6 +90,9 @@ export type StudentPlan = {
   university: string
   intake: string
   createdAt: string
+  stage: string
+  completedTasks: string[]
+  updatedAt: string
 }
 
 export type CommunityStudent = {
@@ -92,6 +104,37 @@ export type CommunityStudent = {
   intake: string | null
   bio: string | null
   profilePhotoDataUrl: string | null
+  roommateSearch: boolean
+}
+
+export type OpportunityAnswer = {
+  id: number
+  displayName: string
+  experienceType: 'Alumni' | 'Planning'
+  content: string
+  createdAt: string
+}
+
+export type OpportunityQuestion = {
+  id: number
+  displayName: string
+  content: string
+  createdAt: string
+  answers: OpportunityAnswer[]
+}
+
+export type CatalogCorrection = {
+  id: number
+  opportunityId: number
+  university: string
+  displayName: string
+  fields: Record<string, string | null>
+  sourceUrl: string | null
+  note: string
+  status: string
+  reviewerNote: string | null
+  createdAt: string
+  reviewedAt: string | null
 }
 
 export type ConversationSummary = {
@@ -105,6 +148,34 @@ export type ConversationSummary = {
   lastMessage: string | null
   lastMessageAt: string | null
   createdAt: string
+  unreadCount?: number
+  isBlocked?: boolean
+}
+
+export type DeadlineReminder = {
+  id: number
+  opportunityId: number
+  university: string
+  deadline: string
+  daysBefore: number
+  createdAt: string
+  sentAt: string | null
+}
+
+export type StudentExperience = {
+  id: number
+  displayName: string
+  rating: number
+  experienceType: 'Alumni' | 'Planning'
+  intake: string
+  content: string
+  createdAt: string
+}
+
+export type ExperienceSummary = {
+  averageRating: number
+  count: number
+  experiences: StudentExperience[]
 }
 
 export type ChatMessage = {

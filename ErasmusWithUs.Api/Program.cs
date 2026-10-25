@@ -1,5 +1,6 @@
 using ErasmusWithUs.Api.Data;
 using ErasmusWithUs.Api.Models;
+using ErasmusWithUs.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.Sqlite;
@@ -36,6 +37,7 @@ if (builder.Environment.IsProduction() && !Path.IsPathRooted(databasePath))
 builder.Services.AddDbContext<ErasmusDbContext>(options =>
     options.UseSqlite($"Data Source={databasePath}"));
 builder.Services.AddSingleton<IPasswordHasher<UserEntity>, PasswordHasher<UserEntity>>();
+builder.Services.AddHostedService<DeadlineReminderWorker>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -119,6 +121,7 @@ using (var scope = app.Services.CreateScope())
     database.Database.EnsureCreated();
     EnsureAuthColumns(database);
     EnsureCommunityTables(database);
+    EnsureFeatureTables(database);
 
     var existingOpportunityIds = database.Opportunities.Select(item => item.Id).ToHashSet();
     var missingOpportunities = SeedData.AllOpportunities
@@ -352,6 +355,7 @@ app.MapPut("/api/profile", async (UpdateProfileRequest request, ClaimsPrincipal 
     user.Intake = request.Intake?.Trim();
     user.Bio = request.Bio?.Trim();
     user.CommunityVisible = request.CommunityVisible ?? user.CommunityVisible;
+    user.RoommateSearch = request.RoommateSearch ?? user.RoommateSearch;
     if (request.RemoveProfilePhoto)
         user.ProfilePhotoDataUrl = null;
     else if (request.ProfilePhotoDataUrl is not null)
@@ -364,6 +368,67 @@ app.MapPut("/api/profile", async (UpdateProfileRequest request, ClaimsPrincipal 
     await database.SaveChangesAsync();
 
     return Results.Ok(ToUserResponse(user));
+}).RequireAuthorization();
+
+app.MapGet("/api/reminders", async (ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var reminders = await database.DeadlineReminders.AsNoTracking()
+        .Where(item => item.UserId == userId.Value)
+        .OrderBy(item => item.OpportunityId)
+        .ToArrayAsync();
+    return Results.Ok(reminders.Select(item => ToDeadlineReminderResponse(item, opportunities)));
+}).RequireAuthorization();
+
+app.MapPost("/api/reminders", async (SaveDeadlineReminderRequest request, ClaimsPrincipal principal,
+    ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var destination = opportunities.FirstOrDefault(item => item.Id == request.OpportunityId);
+    if (destination is null)
+        return Results.NotFound(new { message = "Choose a listed destination first." });
+    if (!DateOnly.TryParse(destination.Deadline, out var deadline) || deadline < DateOnly.FromDateTime(DateTime.UtcNow))
+        return Results.Conflict(new { message = "This listed deadline has passed or needs verification, so it cannot be reminded." });
+    if (request.DaysBefore is not (1 or 3 or 7 or 14 or 30))
+        return Results.BadRequest(new { message = "Choose a reminder window of 1, 3, 7, 14 or 30 days." });
+
+    var reminder = await database.DeadlineReminders.SingleOrDefaultAsync(item =>
+        item.UserId == userId.Value && item.OpportunityId == request.OpportunityId);
+    if (reminder is null)
+    {
+        reminder = new DeadlineReminderEntity
+        {
+            UserId = userId.Value,
+            OpportunityId = request.OpportunityId,
+            DaysBefore = request.DaysBefore
+        };
+        database.DeadlineReminders.Add(reminder);
+    }
+    else
+    {
+        reminder.DaysBefore = request.DaysBefore;
+        reminder.CreatedAt = DateTimeOffset.UtcNow;
+        reminder.SentAt = null;
+    }
+
+    await database.SaveChangesAsync();
+    return Results.Ok(ToDeadlineReminderResponse(reminder, opportunities));
+}).RequireAuthorization();
+
+app.MapDelete("/api/reminders/{id:int}", async (int id, ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var reminder = await database.DeadlineReminders.SingleOrDefaultAsync(item => item.Id == id && item.UserId == userId.Value);
+    if (reminder is null) return Results.NotFound();
+    database.DeadlineReminders.Remove(reminder);
+    await database.SaveChangesAsync();
+    return Results.NoContent();
 }).RequireAuthorization();
 
 app.MapGet("/api/community/plans", async (ClaimsPrincipal principal, ErasmusDbContext database) =>
@@ -381,7 +446,10 @@ app.MapGet("/api/community/plans", async (ClaimsPrincipal principal, ErasmusDbCo
         item.OpportunityId,
         opportunities.FirstOrDefault(opportunity => opportunity.Id == item.OpportunityId)?.University ?? "University",
         item.Intake,
-        item.CreatedAt)));
+        item.CreatedAt,
+        item.Stage,
+        DeserializeStringArray(item.ChecklistJson),
+        item.UpdatedAt)));
 }).RequireAuthorization();
 
 app.MapPost("/api/community/plans", async (CreateStudentPlanRequest request, ClaimsPrincipal principal,
@@ -399,13 +467,38 @@ app.MapPost("/api/community/plans", async (CreateStudentPlanRequest request, Cla
         item.OpportunityId == request.OpportunityId && item.Intake == intake);
     if (existing is not null)
         return Results.Ok(new StudentPlanResponse(existing.Id, existing.OpportunityId,
-            opportunities.First(item => item.Id == existing.OpportunityId).University, existing.Intake, existing.CreatedAt));
+            opportunities.First(item => item.Id == existing.OpportunityId).University, existing.Intake, existing.CreatedAt,
+            existing.Stage, DeserializeStringArray(existing.ChecklistJson), existing.UpdatedAt));
 
     var plan = new StudentPlanEntity { UserId = userId.Value, OpportunityId = request.OpportunityId, Intake = intake };
     database.StudentPlans.Add(plan);
     await database.SaveChangesAsync();
     return Results.Created($"/api/community/plans/{plan.Id}", new StudentPlanResponse(plan.Id, plan.OpportunityId,
-        opportunities.First(item => item.Id == plan.OpportunityId).University, plan.Intake, plan.CreatedAt));
+        opportunities.First(item => item.Id == plan.OpportunityId).University, plan.Intake, plan.CreatedAt,
+        plan.Stage, DeserializeStringArray(plan.ChecklistJson), plan.UpdatedAt));
+}).RequireAuthorization();
+
+app.MapPut("/api/community/plans/{id:int}", async (int id, UpdateStudentPlanRequest request,
+    ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var stage = request.Stage?.Trim();
+    var allowedStages = new[] { "Considering", "Preparing", "Submitted", "Nominated", "Accepted", "Completed" };
+    if (stage is null || !allowedStages.Contains(stage) || request.CompletedTasks is null || request.CompletedTasks.Length > 20 ||
+        request.CompletedTasks.Any(task => string.IsNullOrWhiteSpace(task) || task.Length > 120))
+        return Results.BadRequest(new { message = "Choose a valid application stage and checklist." });
+
+    var plan = await database.StudentPlans.SingleOrDefaultAsync(item => item.Id == id && item.UserId == userId.Value);
+    if (plan is null) return Results.NotFound();
+    plan.Stage = stage;
+    plan.ChecklistJson = System.Text.Json.JsonSerializer.Serialize(request.CompletedTasks.Distinct(StringComparer.Ordinal).ToArray());
+    plan.UpdatedAt = DateTimeOffset.UtcNow;
+    await database.SaveChangesAsync();
+    return Results.Ok(new StudentPlanResponse(plan.Id, plan.OpportunityId,
+        opportunities.FirstOrDefault(item => item.Id == plan.OpportunityId)?.University ?? "University",
+        plan.Intake, plan.CreatedAt, plan.Stage, DeserializeStringArray(plan.ChecklistJson), plan.UpdatedAt));
 }).RequireAuthorization();
 
 app.MapDelete("/api/community/plans/{id:int}", async (int id, ClaimsPrincipal principal, ErasmusDbContext database) =>
@@ -421,7 +514,77 @@ app.MapDelete("/api/community/plans/{id:int}", async (int id, ClaimsPrincipal pr
     return Results.NoContent();
 }).RequireAuthorization();
 
-app.MapGet("/api/community/students", async (int opportunityId, string intake, ClaimsPrincipal principal,
+app.MapGet("/api/community/blocks", async (ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var blockedUserIds = await database.CommunityBlocks.AsNoTracking()
+        .Where(item => item.UserId == userId.Value)
+        .Select(item => item.BlockedUserId)
+        .ToArrayAsync();
+    return Results.Ok(blockedUserIds);
+}).RequireAuthorization();
+
+app.MapPost("/api/community/users/{id:int}/block", async (int id, ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    if (id == userId.Value || !await database.Users.AnyAsync(item => item.Id == id && item.EmailVerified))
+        return Results.BadRequest(new { message = "Choose a different verified student." });
+
+    if (!await database.CommunityBlocks.AnyAsync(item => item.UserId == userId.Value && item.BlockedUserId == id))
+    {
+        database.CommunityBlocks.Add(new CommunityBlockEntity { UserId = userId.Value, BlockedUserId = id });
+        await database.SaveChangesAsync();
+    }
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapDelete("/api/community/users/{id:int}/block", async (int id, ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var block = await database.CommunityBlocks.SingleOrDefaultAsync(item => item.UserId == userId.Value && item.BlockedUserId == id);
+    if (block is null) return Results.NotFound();
+    database.CommunityBlocks.Remove(block);
+    await database.SaveChangesAsync();
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/community/reports", async (ReportCommunityUserRequest request, ClaimsPrincipal principal,
+    ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var reason = request.Reason?.Trim();
+    if (request.ReportedUserId == userId.Value || string.IsNullOrWhiteSpace(reason) || reason.Length > 500 ||
+        !await database.Users.AnyAsync(item => item.Id == request.ReportedUserId && item.EmailVerified))
+        return Results.BadRequest(new { message = "Choose a student and enter a report reason under 500 characters." });
+    if (request.ConversationId is { } conversationId &&
+        !await database.Conversations.AnyAsync(item => item.Id == conversationId &&
+            (item.UserAId == userId.Value && item.UserBId == request.ReportedUserId ||
+             item.UserBId == userId.Value && item.UserAId == request.ReportedUserId)))
+        return Results.BadRequest(new { message = "The selected conversation does not match this report." });
+
+    var report = new CommunityReportEntity
+    {
+        ReporterUserId = userId.Value,
+        ReportedUserId = request.ReportedUserId,
+        ConversationId = request.ConversationId,
+        Reason = reason
+    };
+    database.CommunityReports.Add(report);
+    await database.SaveChangesAsync();
+    app.Logger.LogWarning("Community report {ReportId} submitted by user {ReporterId} for user {ReportedId}.",
+        report.Id, userId.Value, request.ReportedUserId);
+    return Results.Accepted();
+}).RequireAuthorization().RequireRateLimiting("community-message");
+
+app.MapGet("/api/community/students", async (int opportunityId, string intake, bool? roommatesOnly, ClaimsPrincipal principal,
     ErasmusDbContext database) =>
 {
     var userId = GetUserId(principal);
@@ -430,17 +593,23 @@ app.MapGet("/api/community/students", async (int opportunityId, string intake, C
     if (!opportunities.Any(item => item.Id == opportunityId) || string.IsNullOrWhiteSpace(intake) || intake.Length > 40)
         return Results.BadRequest(new { message = "Choose a destination and intake term." });
 
+    var blockedRows = await database.CommunityBlocks.AsNoTracking()
+        .Where(item => item.UserId == userId.Value || item.BlockedUserId == userId.Value)
+        .Select(item => new { item.UserId, item.BlockedUserId })
+        .ToArrayAsync();
+    var excludedIds = blockedRows.Select(item => item.UserId == userId.Value ? item.BlockedUserId : item.UserId).ToArray();
     var matchingIds = await database.StudentPlans.AsNoTracking()
         .Where(item => item.OpportunityId == opportunityId && item.Intake == intake && item.UserId != userId.Value)
+        .Where(item => !excludedIds.Contains(item.UserId))
         .Select(item => item.UserId)
         .Distinct()
         .ToArrayAsync();
     var students = await database.Users.AsNoTracking()
-        .Where(item => matchingIds.Contains(item.Id) && item.EmailVerified && item.CommunityVisible)
+        .Where(item => matchingIds.Contains(item.Id) && item.EmailVerified && item.CommunityVisible && (roommatesOnly != true || item.RoommateSearch))
         .OrderBy(item => item.DisplayName)
         .Take(30)
         .Select(item => new StudentCardResponse(item.Id, item.DisplayName, item.HomeUniversity, item.StudyField,
-            item.Level, item.Intake, item.Bio, item.ProfilePhotoDataUrl))
+            item.Level, item.Intake, item.Bio, item.ProfilePhotoDataUrl, item.RoommateSearch))
         .ToArrayAsync();
     return Results.Ok(students);
 }).RequireAuthorization();
@@ -456,22 +625,48 @@ app.MapGet("/api/community/conversations", async (ClaimsPrincipal principal, Era
         .OrderByDescending(item => item.CreatedAt)
         .Take(50)
         .ToArrayAsync();
+    var conversationIds = conversations.Select(item => item.Id).ToArray();
+    var otherUserIds = conversations.Select(item => item.UserAId == userId.Value ? item.UserBId : item.UserAId).Distinct().ToArray();
+    var otherUsers = await database.Users.AsNoTracking().Where(item => otherUserIds.Contains(item.Id))
+        .ToDictionaryAsync(item => item.Id);
+    var latestMessageIds = await database.Messages.AsNoTracking()
+        .Where(item => conversationIds.Contains(item.ConversationId))
+        .GroupBy(item => item.ConversationId)
+        .Select(group => new { ConversationId = group.Key, MessageId = group.Max(item => item.Id) })
+        .ToArrayAsync();
+    var messageIds = latestMessageIds.Select(item => item.MessageId).ToArray();
+    var latestMessages = await database.Messages.AsNoTracking().Where(item => messageIds.Contains(item.Id))
+        .ToDictionaryAsync(item => item.ConversationId, item => new MessagePreview(item.Content, item.CreatedAt));
+    var blockedRows = await database.CommunityBlocks.AsNoTracking()
+        .Where(item => item.UserId == userId.Value && otherUserIds.Contains(item.BlockedUserId) ||
+            item.BlockedUserId == userId.Value && otherUserIds.Contains(item.UserId))
+        .ToArrayAsync();
+    var unreadRows = await (
+        from message in database.Messages.AsNoTracking()
+        join state in database.ConversationReadStates.AsNoTracking().Where(item => item.UserId == userId.Value)
+            on message.ConversationId equals state.ConversationId into states
+        from state in states.DefaultIfEmpty()
+        where conversationIds.Contains(message.ConversationId) && message.SenderUserId != userId.Value &&
+            (state == null || message.Id > state.LastReadMessageId)
+        group message by message.ConversationId into messages
+        select new { ConversationId = messages.Key, Count = messages.Count() })
+        .ToArrayAsync();
+    var unreadCounts = unreadRows.ToDictionary(item => item.ConversationId, item => item.Count);
     var summaries = new List<ConversationSummaryResponse>(conversations.Length);
     foreach (var conversation in conversations)
     {
         var otherUserId = conversation.UserAId == userId.Value ? conversation.UserBId : conversation.UserAId;
-        var otherUser = await database.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == otherUserId);
-        var lastMessage = await database.Messages.AsNoTracking()
-            .Where(item => item.ConversationId == conversation.Id)
-            .OrderByDescending(item => item.Id)
-            .Select(item => new MessagePreview(item.Content, item.CreatedAt))
-            .FirstOrDefaultAsync();
-        if (otherUser is null) continue;
+        if (!otherUsers.TryGetValue(otherUserId, out var otherUser)) continue;
+        latestMessages.TryGetValue(conversation.Id, out var lastMessage);
+        var unreadCount = unreadCounts.GetValueOrDefault(conversation.Id);
+        var isBlocked = blockedRows.Any(item =>
+            (item.UserId == userId.Value && item.BlockedUserId == otherUserId) ||
+            (item.UserId == otherUserId && item.BlockedUserId == userId.Value));
         summaries.Add(new ConversationSummaryResponse(conversation.Id, otherUser.Id, otherUser.DisplayName,
             otherUser.CommunityVisible ? otherUser.HomeUniversity : null,
             otherUser.CommunityVisible ? otherUser.ProfilePhotoDataUrl : null,
             opportunities.FirstOrDefault(item => item.Id == conversation.OpportunityId)?.University ?? "Erasmus exchange",
-            conversation.Intake, lastMessage?.Content, lastMessage?.CreatedAt, conversation.CreatedAt));
+            conversation.Intake, lastMessage?.Content, lastMessage?.CreatedAt, conversation.CreatedAt, unreadCount, isBlocked));
     }
     return Results.Ok(summaries);
 }).RequireAuthorization();
@@ -488,6 +683,10 @@ app.MapPost("/api/community/conversations", async (StartConversationRequest requ
     if (recipient is null || recipient.Id == userId.Value || !opportunities.Any(item => item.Id == request.OpportunityId) ||
         string.IsNullOrWhiteSpace(intake) || intake.Length > 40)
         return Results.BadRequest(new { message = "This student is not available for this exchange plan." });
+    if (await database.CommunityBlocks.AnyAsync(item =>
+        (item.UserId == userId.Value && item.BlockedUserId == recipient.Id) ||
+        (item.UserId == recipient.Id && item.BlockedUserId == userId.Value)))
+        return Results.Conflict(new { message = "This conversation is unavailable." });
 
     var senderHasPlan = await database.StudentPlans.AnyAsync(item => item.UserId == userId.Value &&
         item.OpportunityId == request.OpportunityId && item.Intake == intake);
@@ -533,6 +732,22 @@ app.MapGet("/api/community/conversations/{id:int}/messages", async (int id, Clai
         .OrderBy(item => item.Id)
         .Select(item => new MessageResponse(item.Id, item.SenderUserId, item.Content, item.CreatedAt))
         .ToArrayAsync();
+    var lastReadMessageId = messages.LastOrDefault()?.Id ?? 0;
+    var readState = await database.ConversationReadStates.SingleOrDefaultAsync(item =>
+        item.ConversationId == id && item.UserId == userId.Value);
+    if (readState is null)
+        database.ConversationReadStates.Add(new ConversationReadStateEntity
+        {
+            ConversationId = id,
+            UserId = userId.Value,
+            LastReadMessageId = lastReadMessageId
+        });
+    else
+    {
+        readState.LastReadMessageId = Math.Max(readState.LastReadMessageId, lastReadMessageId);
+        readState.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+    await database.SaveChangesAsync();
     return Results.Ok(messages);
 }).RequireAuthorization();
 
@@ -546,6 +761,11 @@ app.MapPost("/api/community/conversations/{id:int}/messages", async (int id, Sen
         .SingleOrDefaultAsync(item => item.Id == id && (item.UserAId == userId.Value || item.UserBId == userId.Value));
     if (conversation is null)
         return Results.NotFound();
+    var otherUserId = conversation.UserAId == userId.Value ? conversation.UserBId : conversation.UserAId;
+    if (await database.CommunityBlocks.AnyAsync(item =>
+        (item.UserId == userId.Value && item.BlockedUserId == otherUserId) ||
+        (item.UserId == otherUserId && item.BlockedUserId == userId.Value)))
+        return Results.Conflict(new { message = "This conversation is unavailable." });
     var content = request.Content?.Trim();
     if (string.IsNullOrWhiteSpace(content) || content.Length > 2000)
         return Results.BadRequest(new { message = "Messages must contain between 1 and 2,000 characters." });
@@ -596,6 +816,263 @@ app.MapGet("/api/opportunities/{id:int}", (int id) =>
         ? Results.Ok(opportunity)
         : Results.NotFound());
 
+app.MapGet("/api/opportunities/{id:int}/experiences", async (int id, ErasmusDbContext database) =>
+{
+    if (!opportunities.Any(item => item.Id == id)) return Results.NotFound();
+    var ratingStats = await database.StudentExperiences.AsNoTracking()
+        .Where(item => item.OpportunityId == id)
+        .GroupBy(item => item.OpportunityId)
+        .Select(group => new { Count = group.Count(), AverageRating = group.Average(item => (double)item.Rating) })
+        .SingleOrDefaultAsync();
+    var experiences = await database.StudentExperiences.AsNoTracking()
+        .Where(item => item.OpportunityId == id)
+        .OrderByDescending(item => item.CreatedAt)
+        .Take(50)
+        .Join(database.Users.AsNoTracking(), experience => experience.UserId, user => user.Id,
+            (experience, user) => new StudentExperienceResponse(
+                experience.Id,
+                user.CommunityVisible ? user.DisplayName : "Erasmus With Us student",
+                experience.Rating,
+                experience.ExperienceType,
+                experience.Intake,
+                experience.Content,
+                experience.CreatedAt))
+        .ToArrayAsync();
+    return Results.Ok(new ExperienceSummaryResponse(
+        ratingStats is null ? 0 : Math.Round(ratingStats.AverageRating, 1),
+        ratingStats?.Count ?? 0,
+        experiences));
+});
+
+app.MapPost("/api/opportunities/{id:int}/experiences", async (int id, SaveStudentExperienceRequest request,
+    ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    if (!opportunities.Any(item => item.Id == id)) return Results.NotFound();
+
+    var content = request.Content?.Trim();
+    var intake = request.Intake?.Trim();
+    if (request.Rating is < 1 or > 5 || string.IsNullOrWhiteSpace(content) || content.Length is < 20 or > 1500 ||
+        string.IsNullOrWhiteSpace(intake) || intake.Length > 40 ||
+        request.ExperienceType is not ("Alumni" or "Planning"))
+        return Results.BadRequest(new { message = "Add a 1–5 rating, select your experience type and intake, and write 20–1,500 characters." });
+
+    var experience = await database.StudentExperiences.SingleOrDefaultAsync(item => item.UserId == userId.Value && item.OpportunityId == id);
+    if (experience is null)
+    {
+        experience = new StudentExperienceEntity { UserId = userId.Value, OpportunityId = id, Rating = request.Rating,
+            ExperienceType = request.ExperienceType, Intake = intake, Content = content };
+        database.StudentExperiences.Add(experience);
+    }
+    else
+    {
+        experience.Rating = request.Rating;
+        experience.ExperienceType = request.ExperienceType;
+        experience.Intake = intake;
+        experience.Content = content;
+        experience.CreatedAt = DateTimeOffset.UtcNow;
+    }
+    await database.SaveChangesAsync();
+    var user = await database.Users.AsNoTracking().SingleAsync(item => item.Id == userId.Value);
+    return Results.Ok(new StudentExperienceResponse(experience.Id,
+        user.CommunityVisible ? user.DisplayName : "Erasmus With Us student", experience.Rating,
+        experience.ExperienceType, experience.Intake, experience.Content, experience.CreatedAt));
+}).RequireAuthorization().RequireRateLimiting("community-message");
+
+app.MapGet("/api/opportunities/{id:int}/questions", async (int id, ErasmusDbContext database) =>
+{
+    if (!opportunities.Any(item => item.Id == id)) return Results.NotFound();
+    var questions = await database.OpportunityQuestions.AsNoTracking()
+        .Where(item => item.OpportunityId == id)
+        .OrderByDescending(item => item.CreatedAt)
+        .Take(40)
+        .ToArrayAsync();
+    var questionIds = questions.Select(item => item.Id).ToArray();
+    var answerRows = await database.OpportunityAnswers.AsNoTracking()
+        .Where(item => questionIds.Contains(item.QuestionId))
+        .OrderBy(item => item.CreatedAt)
+        .Join(database.Users.AsNoTracking(), answer => answer.UserId, user => user.Id,
+            (answer, user) => new
+            {
+                answer.QuestionId,
+                Response = new OpportunityAnswerResponse(answer.Id,
+                    user.CommunityVisible ? user.DisplayName : "Erasmus With Us student",
+                    answer.ExperienceType, answer.Content, answer.CreatedAt)
+            })
+        .ToArrayAsync();
+    var answersByQuestion = answerRows.GroupBy(item => item.QuestionId)
+        .ToDictionary(group => group.Key, group => group.Select(item => item.Response).ToArray());
+    var displayNames = await database.Users.AsNoTracking()
+        .Where(item => questions.Select(question => question.UserId).Contains(item.Id))
+        .Select(item => new { item.Id, item.DisplayName, item.CommunityVisible })
+        .ToDictionaryAsync(item => item.Id);
+    return Results.Ok(questions.Select(question => new OpportunityQuestionResponse(
+        question.Id,
+        displayNames.TryGetValue(question.UserId, out var asker) && asker.CommunityVisible
+            ? asker.DisplayName : "Erasmus With Us student",
+        question.Content,
+        question.CreatedAt,
+        answersByQuestion.GetValueOrDefault(question.Id, []))));
+});
+
+app.MapPost("/api/opportunities/{id:int}/questions", async (int id, SaveOpportunityQuestionRequest request,
+    ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    if (!opportunities.Any(item => item.Id == id)) return Results.NotFound();
+    var content = request.Content?.Trim();
+    if (string.IsNullOrWhiteSpace(content) || content.Length is < 10 or > 500)
+        return Results.BadRequest(new { message = "Write a question between 10 and 500 characters." });
+    var question = new OpportunityQuestionEntity { UserId = userId.Value, OpportunityId = id, Content = content };
+    database.OpportunityQuestions.Add(question);
+    await database.SaveChangesAsync();
+    var user = await database.Users.AsNoTracking().SingleAsync(item => item.Id == userId.Value);
+    return Results.Created($"/api/opportunities/{id}/questions", new OpportunityQuestionResponse(
+        question.Id, user.CommunityVisible ? user.DisplayName : "Erasmus With Us student", question.Content,
+        question.CreatedAt, []));
+}).RequireAuthorization().RequireRateLimiting("community-message");
+
+app.MapPost("/api/questions/{questionId:int}/answers", async (int questionId, SaveOpportunityAnswerRequest request,
+    ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    var question = await database.OpportunityQuestions.FindAsync(questionId);
+    if (question is null) return Results.NotFound();
+    var content = request.Content?.Trim();
+    if (string.IsNullOrWhiteSpace(content) || content.Length is < 10 or > 1200 ||
+        request.ExperienceType is not ("Alumni" or "Planning"))
+        return Results.BadRequest(new { message = "Choose your experience type and write an answer between 10 and 1,200 characters." });
+    var answer = await database.OpportunityAnswers.SingleOrDefaultAsync(item =>
+        item.QuestionId == questionId && item.UserId == userId.Value);
+    if (answer is null)
+    {
+        answer = new OpportunityAnswerEntity { QuestionId = questionId, UserId = userId.Value,
+            Content = content, ExperienceType = request.ExperienceType };
+        database.OpportunityAnswers.Add(answer);
+    }
+    else
+    {
+        answer.Content = content;
+        answer.ExperienceType = request.ExperienceType;
+        answer.CreatedAt = DateTimeOffset.UtcNow;
+    }
+    await database.SaveChangesAsync();
+    var user = await database.Users.AsNoTracking().SingleAsync(item => item.Id == userId.Value);
+    return Results.Ok(new OpportunityAnswerResponse(answer.Id,
+        user.CommunityVisible ? user.DisplayName : "Erasmus With Us student", answer.ExperienceType, answer.Content, answer.CreatedAt));
+}).RequireAuthorization().RequireRateLimiting("community-message");
+
+app.MapPost("/api/opportunities/{id:int}/corrections", async (int id, SubmitCatalogCorrectionRequest request,
+    ClaimsPrincipal principal, ErasmusDbContext database) =>
+{
+    var userId = GetUserId(principal);
+    if (userId is null || !await database.Users.AnyAsync(item => item.Id == userId && item.EmailVerified))
+        return Results.Unauthorized();
+    if (!opportunities.Any(item => item.Id == id)) return Results.NotFound();
+    var supportedFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "University", "City", "Country", "StudyFields", "Levels", "Languages", "MinimumGpa", "Deadline", "MonthlyGrant", "SourceUrl" };
+    var fields = request.Fields;
+    var note = request.Note?.Trim();
+    if (fields is null || fields.Count is < 1 or > 8 || fields.Any(field =>
+            !supportedFields.Contains(field.Key) || string.IsNullOrWhiteSpace(field.Value) || field.Value.Length > 300) ||
+        string.IsNullOrWhiteSpace(note) || note.Length is < 10 or > 700)
+        return Results.BadRequest(new { message = "Select valid catalogue fields and explain the correction in 10–700 characters." });
+    var sourceUrl = request.SourceUrl?.Trim();
+    if (sourceUrl is not null && (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var sourceUri) || sourceUri.Scheme != Uri.UriSchemeHttps))
+        return Results.BadRequest(new { message = "The supporting source must be an HTTPS link." });
+    var correction = new CatalogCorrectionEntity
+    {
+        UserId = userId.Value,
+        OpportunityId = id,
+        FieldsJson = System.Text.Json.JsonSerializer.Serialize(fields),
+        SourceUrl = sourceUrl,
+        Note = note
+    };
+    database.CatalogCorrections.Add(correction);
+    await database.SaveChangesAsync();
+    return Results.Accepted($"/api/opportunities/{id}/corrections", new { correction.Id, correction.Status, correction.CreatedAt });
+}).RequireAuthorization().RequireRateLimiting("community-message");
+
+app.MapGet("/api/catalog/corrections/review", async (HttpRequest request, IConfiguration configuration,
+    ErasmusDbContext database) =>
+{
+    if (!HasCatalogReviewAccess(request, configuration)) return Results.Unauthorized();
+    var items = await database.CatalogCorrections.AsNoTracking()
+        .Where(item => item.Status == "Pending")
+        .OrderBy(item => item.CreatedAt)
+        .Join(database.Users.AsNoTracking(), correction => correction.UserId, user => user.Id,
+            (correction, user) => new { correction, user.DisplayName })
+        .ToArrayAsync();
+    return Results.Ok(items.Select(item => new CatalogCorrectionResponse(item.correction.Id,
+        item.correction.OpportunityId,
+        opportunities.FirstOrDefault(opportunity => opportunity.Id == item.correction.OpportunityId)?.University ?? "University",
+        item.DisplayName,
+        System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string?>>(item.correction.FieldsJson) ?? [],
+        item.correction.SourceUrl, item.correction.Note, item.correction.Status, item.correction.ReviewerNote,
+        item.correction.CreatedAt, item.correction.ReviewedAt)));
+});
+
+app.MapPut("/api/catalog/corrections/{id:int}/review", async (int id, ReviewCatalogCorrectionRequest request,
+    HttpRequest httpRequest, IConfiguration configuration, ErasmusDbContext database) =>
+{
+    if (!HasCatalogReviewAccess(httpRequest, configuration)) return Results.Unauthorized();
+    if (request.Status is not ("Accepted" or "Rejected" or "NeedsMoreInfo") || request.ReviewerNote?.Length > 500)
+        return Results.BadRequest(new { message = "Choose Accepted, Rejected or NeedsMoreInfo and keep the review note under 500 characters." });
+    var correction = await database.CatalogCorrections.FindAsync(id);
+    if (correction is null) return Results.NotFound();
+    if (correction.Status != "Pending") return Results.Conflict(new { message = "This suggestion has already been reviewed." });
+
+    if (request.Status == "Accepted")
+    {
+        if (string.IsNullOrWhiteSpace(correction.SourceUrl))
+            return Results.BadRequest(new { message = "Add an official HTTPS source before accepting this correction." });
+        var entity = await database.Opportunities.FindAsync(correction.OpportunityId);
+        if (entity is null) return Results.NotFound();
+        var fields = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string?>>(correction.FieldsJson) ?? [];
+        foreach (var (key, rawValue) in fields)
+        {
+            var value = rawValue?.Trim() ?? string.Empty;
+            switch (key.ToLowerInvariant())
+            {
+                case "university" when value.Length is > 0 and <= 200: entity.University = value; break;
+                case "city" when value.Length is > 0 and <= 100: entity.City = value; break;
+                case "country" when value.Length is > 0 and <= 100: entity.Country = value; break;
+                case "studyfields": entity.StudyFields = ParseCatalogList(value); break;
+                case "levels": entity.Levels = ParseCatalogList(value); break;
+                case "languages": entity.Languages = ParseCatalogList(value); break;
+                case "minimumgpa" when double.TryParse(value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var gpa) && gpa is >= 0 and <= 4:
+                    entity.MinimumGpa = gpa; break;
+                case "deadline" when DateOnly.TryParse(value, out var deadline): entity.Deadline = deadline.ToString("yyyy-MM-dd"); break;
+                case "monthlygrant" when int.TryParse(value, out var grant) && grant is >= 0 and <= 2000:
+                    entity.MonthlyGrant = grant; break;
+                case "sourceurl" when Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps:
+                    entity.SourceUrl = value; break;
+                default:
+                    return Results.BadRequest(new { message = $"The proposed value for {key} is invalid. Review it before accepting." });
+            }
+        }
+        if (Uri.TryCreate(correction.SourceUrl, UriKind.Absolute, out var suppliedSource) && suppliedSource.Scheme == Uri.UriSchemeHttps)
+            entity.SourceUrl = correction.SourceUrl;
+        entity.LastVerifiedAt = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
+        entity.VerificationStatus = "Verified";
+    }
+
+    correction.Status = request.Status;
+    correction.ReviewerNote = request.ReviewerNote?.Trim();
+    correction.ReviewedAt = DateTimeOffset.UtcNow;
+    await database.SaveChangesAsync();
+    if (request.Status == "Accepted")
+        opportunities = (await database.Opportunities.AsNoTracking().ToArrayAsync()).Select(ToOpportunity).ToArray();
+    return Results.Ok(new { correction.Id, correction.Status, correction.ReviewerNote, correction.ReviewedAt });
+});
+
 app.MapPost("/api/matching", (StudentProfile profile) =>
 {
     var matches = opportunities
@@ -603,7 +1080,8 @@ app.MapPost("/api/matching", (StudentProfile profile) =>
             opportunity,
             CalculateMatchScore(profile, opportunity),
             BuildMatchReasons(profile, opportunity),
-            BuildMatchBreakdown(profile, opportunity)))
+            BuildMatchBreakdown(profile, opportunity),
+            BuildEligibilityAssessment(profile, opportunity)))
         .OrderByDescending(result => result.Score)
         .ToArray();
 
@@ -639,43 +1117,59 @@ app.Run();
 
 static int CalculateMatchScore(StudentProfile profile, ErasmusOpportunity opportunity)
 {
-    var score = 0;
+    var factors = BuildMatchBreakdown(profile, opportunity);
+    var earned = factors.Sum(item => item.Points);
+    var possible = factors.Sum(item => item.MaxPoints);
+    return possible == 0 ? 0 : Math.Clamp((int)Math.Round(earned / (double)possible * 100), 0, 100);
+}
 
-    if (!string.IsNullOrWhiteSpace(profile.Country) &&
-        opportunity.Country.Equals(profile.Country, StringComparison.OrdinalIgnoreCase))
-        score += 10;
+static EligibilityAssessment BuildEligibilityAssessment(StudentProfile profile, ErasmusOpportunity opportunity)
+{
+    var reasons = new List<string>();
+    var hasField = !string.IsNullOrWhiteSpace(profile.StudyField);
+    var hasLevel = !string.IsNullOrWhiteSpace(profile.Level);
+    var hasGpa = profile.Gpa > 0;
+    var meetsPublishedRequirements = true;
 
-    if (profile.PreferredCountries.Length > 0 &&
-        profile.PreferredCountries.Contains(opportunity.Country, StringComparer.OrdinalIgnoreCase))
-        score += 25;
+    if (hasField && !opportunity.StudyFields.Contains(profile.StudyField!, StringComparer.OrdinalIgnoreCase))
+    {
+        meetsPublishedRequirements = false;
+        reasons.Add("Your study field is not listed for this destination.");
+    }
+    else if (hasField)
+        reasons.Add("Your study field appears in the published list.");
 
-    if (!string.IsNullOrWhiteSpace(profile.StudyField) &&
-        opportunity.StudyFields.Contains(profile.StudyField, StringComparer.OrdinalIgnoreCase))
-        score += 30;
+    if (hasLevel && !opportunity.Levels.Contains(profile.Level!, StringComparer.OrdinalIgnoreCase))
+    {
+        meetsPublishedRequirements = false;
+        reasons.Add("Your degree level is not listed for this destination.");
+    }
+    else if (hasLevel)
+        reasons.Add("Your degree level appears in the published list.");
 
-    if (!string.IsNullOrWhiteSpace(profile.Level) &&
-        opportunity.Levels.Contains(profile.Level, StringComparer.OrdinalIgnoreCase))
-        score += 15;
+    if (hasGpa && profile.Gpa < opportunity.MinimumGpa)
+    {
+        meetsPublishedRequirements = false;
+        reasons.Add($"Your GPA is below the listed minimum of {opportunity.MinimumGpa:0.0}.");
+    }
+    else if (hasGpa)
+        reasons.Add("Your GPA meets the listed minimum.");
 
-    if (profile.Gpa >= opportunity.MinimumGpa)
-        score += 20;
-    else
-        score += (int)Math.Max(0, (profile.Gpa / Math.Max(opportunity.MinimumGpa, 0.1)) * 10 - 10);
+    var deadlineIsCurrent = DateOnly.TryParse(opportunity.Deadline, out var deadline) &&
+        deadline >= DateOnly.FromDateTime(DateTime.UtcNow);
+    if (!deadlineIsCurrent)
+    {
+        meetsPublishedRequirements = false;
+        reasons.Add("The listed application deadline has passed or needs verification.");
+    }
 
-    if (profile.Languages.Intersect(opportunity.Languages, StringComparer.OrdinalIgnoreCase).Any())
-        score += 15;
+    var hasEnoughProfileData = hasField && hasLevel && hasGpa;
+    if (!hasField) reasons.Add("Add your study field to check the listed subject requirements.");
+    if (!hasLevel) reasons.Add("Add your degree level to check the listed level requirements.");
+    if (!hasGpa) reasons.Add("Add your GPA to compare it with the listed minimum.");
+    reasons.Add("The bilateral agreement and nomination must still be confirmed by your home university.");
 
-    if (profile.Budget > 0 && opportunity.MonthlyGrant >= profile.Budget)
-        score += 10;
-
-    var opportunityTags = GetOpportunityTags(opportunity);
-    var likedMatches = GetPreferenceTags(profile.Likes).Intersect(opportunityTags, StringComparer.OrdinalIgnoreCase).Count();
-    var dislikedMatches = GetPreferenceTags(profile.Dislikes).Intersect(opportunityTags, StringComparer.OrdinalIgnoreCase).Count();
-
-    score += likedMatches * 8;
-    score -= dislikedMatches * 12;
-
-    return Math.Clamp(score, 0, 100);
+    return new EligibilityAssessment(meetsPublishedRequirements, hasEnoughProfileData, false, reasons.ToArray());
 }
 
 static string[] BuildMatchReasons(StudentProfile profile, ErasmusOpportunity opportunity)
@@ -692,8 +1186,8 @@ static string[] BuildMatchReasons(StudentProfile profile, ErasmusOpportunity opp
     if (profile.Languages.Intersect(opportunity.Languages, StringComparer.OrdinalIgnoreCase).Any())
         reasons.Add("Your language profile fits this campus.");
 
-    if (profile.Budget > 0 && opportunity.MonthlyGrant >= profile.Budget)
-        reasons.Add("The grant is strong enough for your budget.");
+    if (profile.Budget > 0 && opportunity.StudentBudgetEstimate <= profile.Budget)
+        reasons.Add("The estimated monthly cost fits your budget.");
 
     var likedMatches = GetPreferenceTags(profile.Likes).Intersect(GetOpportunityTags(opportunity), StringComparer.OrdinalIgnoreCase).ToArray();
     if (likedMatches.Length > 0)
@@ -704,23 +1198,28 @@ static string[] BuildMatchReasons(StudentProfile profile, ErasmusOpportunity opp
 
 static MatchFactor[] BuildMatchBreakdown(StudentProfile profile, ErasmusOpportunity opportunity)
 {
+    var homeCountryPoints = !string.IsNullOrWhiteSpace(profile.Country) && opportunity.Country.Equals(profile.Country, StringComparison.OrdinalIgnoreCase) ? 10 : 0;
     var countryPoints = profile.PreferredCountries.Contains(opportunity.Country, StringComparer.OrdinalIgnoreCase) ? 25 : 0;
     var fieldPoints = !string.IsNullOrWhiteSpace(profile.StudyField) && opportunity.StudyFields.Contains(profile.StudyField, StringComparer.OrdinalIgnoreCase) ? 30 : 0;
     var levelPoints = !string.IsNullOrWhiteSpace(profile.Level) && opportunity.Levels.Contains(profile.Level, StringComparer.OrdinalIgnoreCase) ? 15 : 0;
     var gpaPoints = profile.Gpa >= opportunity.MinimumGpa ? 20 : (int)Math.Max(0, (profile.Gpa / Math.Max(opportunity.MinimumGpa, 0.1)) * 10 - 10);
     var languagePoints = profile.Languages.Intersect(opportunity.Languages, StringComparer.OrdinalIgnoreCase).Any() ? 15 : 0;
-    var budgetPoints = profile.Budget > 0 && opportunity.MonthlyGrant >= profile.Budget ? 10 : 0;
-    var preferencePoints = GetPreferenceTags(profile.Likes).Intersect(GetOpportunityTags(opportunity), StringComparer.OrdinalIgnoreCase).Count() * 8;
+    var budgetPoints = profile.Budget > 0 && opportunity.StudentBudgetEstimate <= profile.Budget ? 10 : 0;
+    var opportunityTags = GetOpportunityTags(opportunity);
+    var likedMatches = GetPreferenceTags(profile.Likes).Intersect(opportunityTags, StringComparer.OrdinalIgnoreCase).Count();
+    var dislikedMatches = GetPreferenceTags(profile.Dislikes).Intersect(opportunityTags, StringComparer.OrdinalIgnoreCase).Count();
+    var preferencePoints = Math.Clamp(likedMatches * 8 - dislikedMatches * 12, -24, 24);
 
     return
     [
+        new MatchFactor("Home country", homeCountryPoints, 10),
         new MatchFactor("Preferred country", countryPoints, 25),
         new MatchFactor("Study field", fieldPoints, 30),
         new MatchFactor("Degree level", levelPoints, 15),
         new MatchFactor("GPA", gpaPoints, 20),
         new MatchFactor("Language", languagePoints, 15),
         new MatchFactor("Grant / budget", budgetPoints, 10),
-        new MatchFactor("Lifestyle choices", Math.Max(0, preferencePoints), 24)
+        new MatchFactor("Lifestyle choices", preferencePoints, 24)
     ];
 }
 
@@ -773,7 +1272,7 @@ static HashSet<string> GetPreferenceTags(IEnumerable<string>? values)
             tags.Add("creative");
         if (text.Contains("grant", StringComparison.OrdinalIgnoreCase) || text.Contains("budget", StringComparison.OrdinalIgnoreCase) || text.Contains("affordable", StringComparison.OrdinalIgnoreCase))
             tags.Add("budget friendly");
-        if (text.Contains("urban", StringComparison.OrdinalIgnoreCase) || text.Contains("city", StringComparison.OrdinalIgnoreCase) || text.Contains("student life", StringComparison.OrdinalIgnoreCase) || text.Contains("nightlife", StringComparison.OrdinalIgnoreCase))
+        if (text.Contains("urban", StringComparison.OrdinalIgnoreCase) || text.Equals("student life", StringComparison.OrdinalIgnoreCase) || text.Contains("nightlife", StringComparison.OrdinalIgnoreCase))
             tags.Add("urban");
         if (text.Contains("social", StringComparison.OrdinalIgnoreCase) || text.Contains("friends", StringComparison.OrdinalIgnoreCase) || text.Contains("party", StringComparison.OrdinalIgnoreCase))
             tags.Add("social");
@@ -972,6 +1471,7 @@ static void EnsureAuthColumns(ErasmusDbContext database)
     TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN Bio TEXT NULL");
     TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN CommunityVisible INTEGER NOT NULL DEFAULT 0");
     TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN ProfilePhotoDataUrl TEXT NULL");
+    TryAddAuthColumn(database, "ALTER TABLE Users ADD COLUMN RoommateSearch INTEGER NOT NULL DEFAULT 0");
 }
 
 static void EnsureCommunityTables(ErasmusDbContext database)
@@ -1026,6 +1526,166 @@ static void EnsureCommunityTables(ErasmusDbContext database)
         CREATE INDEX IF NOT EXISTS IX_Messages_ConversationId_Id
         ON Messages (ConversationId, Id)
         """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS DeadlineReminders (
+            Id INTEGER NOT NULL CONSTRAINT PK_DeadlineReminders PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            OpportunityId INTEGER NOT NULL,
+            DaysBefore INTEGER NOT NULL DEFAULT 7,
+            CreatedAt TEXT NOT NULL,
+            SentAt TEXT NULL,
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_DeadlineReminders_UserId_OpportunityId
+        ON DeadlineReminders (UserId, OpportunityId)
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS CommunityBlocks (
+            Id INTEGER NOT NULL CONSTRAINT PK_CommunityBlocks PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            BlockedUserId INTEGER NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            CHECK (UserId <> BlockedUserId),
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE,
+            FOREIGN KEY (BlockedUserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_CommunityBlocks_UserId_BlockedUserId
+        ON CommunityBlocks (UserId, BlockedUserId)
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS CommunityReports (
+            Id INTEGER NOT NULL CONSTRAINT PK_CommunityReports PRIMARY KEY AUTOINCREMENT,
+            ReporterUserId INTEGER NOT NULL,
+            ReportedUserId INTEGER NOT NULL,
+            ConversationId INTEGER NULL,
+            Reason TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            FOREIGN KEY (ReporterUserId) REFERENCES Users(Id) ON DELETE CASCADE,
+            FOREIGN KEY (ReportedUserId) REFERENCES Users(Id) ON DELETE CASCADE,
+            FOREIGN KEY (ConversationId) REFERENCES Conversations(Id) ON DELETE SET NULL
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS ConversationReadStates (
+            Id INTEGER NOT NULL CONSTRAINT PK_ConversationReadStates PRIMARY KEY AUTOINCREMENT,
+            ConversationId INTEGER NOT NULL,
+            UserId INTEGER NOT NULL,
+            LastReadMessageId INTEGER NOT NULL DEFAULT 0,
+            UpdatedAt TEXT NOT NULL,
+            FOREIGN KEY (ConversationId) REFERENCES Conversations(Id) ON DELETE CASCADE,
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_ConversationReadStates_ConversationId_UserId
+        ON ConversationReadStates (ConversationId, UserId)
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS StudentExperiences (
+            Id INTEGER NOT NULL CONSTRAINT PK_StudentExperiences PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            OpportunityId INTEGER NOT NULL,
+            Rating INTEGER NOT NULL,
+            ExperienceType TEXT NOT NULL,
+            Intake TEXT NOT NULL,
+            Content TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_StudentExperiences_UserId_OpportunityId
+        ON StudentExperiences (UserId, OpportunityId)
+        """);
+}
+
+static void EnsureFeatureTables(ErasmusDbContext database)
+{
+    TryAddAuthColumn(database, "ALTER TABLE StudentPlans ADD COLUMN Stage TEXT NOT NULL DEFAULT 'Considering'");
+    TryAddAuthColumn(database, "ALTER TABLE StudentPlans ADD COLUMN ChecklistJson TEXT NOT NULL DEFAULT '[]'");
+    TryAddAuthColumn(database, "ALTER TABLE StudentPlans ADD COLUMN UpdatedAt TEXT NOT NULL DEFAULT '2000-01-01T00:00:00+00:00'");
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS CatalogCorrections (
+            Id INTEGER NOT NULL CONSTRAINT PK_CatalogCorrections PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            OpportunityId INTEGER NOT NULL,
+            FieldsJson TEXT NOT NULL,
+            SourceUrl TEXT NULL,
+            Note TEXT NOT NULL,
+            Status TEXT NOT NULL DEFAULT 'Pending',
+            ReviewerNote TEXT NULL,
+            CreatedAt TEXT NOT NULL,
+            ReviewedAt TEXT NULL,
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE INDEX IF NOT EXISTS IX_CatalogCorrections_Status_CreatedAt
+        ON CatalogCorrections (Status, CreatedAt)
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS OpportunityQuestions (
+            Id INTEGER NOT NULL CONSTRAINT PK_OpportunityQuestions PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            OpportunityId INTEGER NOT NULL,
+            Content TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE INDEX IF NOT EXISTS IX_OpportunityQuestions_OpportunityId_CreatedAt
+        ON OpportunityQuestions (OpportunityId, CreatedAt)
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS OpportunityAnswers (
+            Id INTEGER NOT NULL CONSTRAINT PK_OpportunityAnswers PRIMARY KEY AUTOINCREMENT,
+            QuestionId INTEGER NOT NULL,
+            UserId INTEGER NOT NULL,
+            Content TEXT NOT NULL,
+            ExperienceType TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            FOREIGN KEY (QuestionId) REFERENCES OpportunityQuestions(Id) ON DELETE CASCADE,
+            FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+        )
+        """);
+    database.Database.ExecuteSqlRaw("""
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_OpportunityAnswers_QuestionId_UserId
+        ON OpportunityAnswers (QuestionId, UserId)
+        """);
+}
+
+static string[] DeserializeStringArray(string json)
+{
+    try
+    {
+        return System.Text.Json.JsonSerializer.Deserialize<string[]>(json) ?? [];
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return [];
+    }
+}
+
+static string[] ParseCatalogList(string value) => value
+    .Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .Take(20)
+    .ToArray();
+
+static bool HasCatalogReviewAccess(HttpRequest request, IConfiguration configuration)
+{
+    var configuredKey = configuration["CatalogReview:Key"];
+    var providedKey = request.Headers["X-Catalog-Review-Key"].ToString();
+    if (string.IsNullOrWhiteSpace(configuredKey) || string.IsNullOrWhiteSpace(providedKey))
+        return false;
+    var expected = Encoding.UTF8.GetBytes(configuredKey);
+    var supplied = Encoding.UTF8.GetBytes(providedKey);
+    return expected.Length == supplied.Length && CryptographicOperations.FixedTimeEquals(expected, supplied);
 }
 
 static void TryAddAuthColumn(ErasmusDbContext database, string sql)
@@ -1109,7 +1769,15 @@ static UserResponse ToUserResponse(UserEntity user)
         user.Intake,
         user.Bio,
         user.CommunityVisible,
-        user.ProfilePhotoDataUrl);
+        user.ProfilePhotoDataUrl,
+        user.RoommateSearch);
+}
+
+static DeadlineReminderResponse ToDeadlineReminderResponse(DeadlineReminderEntity reminder, ErasmusOpportunity[] catalog)
+{
+    var opportunity = catalog.First(item => item.Id == reminder.OpportunityId);
+    return new DeadlineReminderResponse(reminder.Id, reminder.OpportunityId, opportunity.University,
+        opportunity.Deadline, reminder.DaysBefore, reminder.CreatedAt, reminder.SentAt);
 }
 
 record RegisterRequest(string Email, string Password, string DisplayName);
@@ -1121,23 +1789,43 @@ record VerifyEmailRequest(string Email, string Token);
 record UpdateProfileRequest(string? DisplayName, string? Country, string? StudyField, string? Level, double? Gpa,
     string[] PreferredCountries, string[] Languages, string? HomeUniversity = null, string? Intake = null,
     string? Bio = null, bool? CommunityVisible = null, string? ProfilePhotoDataUrl = null,
-    bool RemoveProfilePhoto = false);
+    bool RemoveProfilePhoto = false, bool? RoommateSearch = null);
 record UserResponse(int Id, string Email, string DisplayName, string? Country, string? StudyField,
     string? Level, double? Gpa, string[] PreferredCountries, string[] Languages, bool EmailVerified,
     DateTimeOffset CreatedAt, string? HomeUniversity, string? Intake, string? Bio, bool CommunityVisible,
-    string? ProfilePhotoDataUrl);
+    string? ProfilePhotoDataUrl, bool RoommateSearch);
 record AuthResponse(string Token, UserResponse User, bool VerificationRequired = false, string? VerificationCode = null);
 record CreateStudentPlanRequest(int OpportunityId, string? Intake);
-record StudentPlanResponse(int Id, int OpportunityId, string University, string Intake, DateTimeOffset CreatedAt);
+record UpdateStudentPlanRequest(string? Stage, string[]? CompletedTasks);
+record SaveDeadlineReminderRequest(int OpportunityId, int DaysBefore = 7);
+record DeadlineReminderResponse(int Id, int OpportunityId, string University, string Deadline, int DaysBefore,
+    DateTimeOffset CreatedAt, DateTimeOffset? SentAt);
+record ReportCommunityUserRequest(int ReportedUserId, int? ConversationId, string? Reason);
+record SaveStudentExperienceRequest(int Rating, string? ExperienceType, string? Intake, string? Content);
+record StudentExperienceResponse(int Id, string DisplayName, int Rating, string ExperienceType, string Intake,
+    string Content, DateTimeOffset CreatedAt);
+record ExperienceSummaryResponse(double AverageRating, int Count, StudentExperienceResponse[] Experiences);
+record StudentPlanResponse(int Id, int OpportunityId, string University, string Intake, DateTimeOffset CreatedAt,
+    string Stage, string[] CompletedTasks, DateTimeOffset UpdatedAt);
 record StudentCardResponse(int Id, string DisplayName, string? HomeUniversity, string? StudyField,
-    string? Level, string? Intake, string? Bio, string? ProfilePhotoDataUrl);
+    string? Level, string? Intake, string? Bio, string? ProfilePhotoDataUrl, bool RoommateSearch);
+record SubmitCatalogCorrectionRequest(Dictionary<string, string?>? Fields, string? SourceUrl, string? Note);
+record ReviewCatalogCorrectionRequest(string? Status, string? ReviewerNote);
+record CatalogCorrectionResponse(int Id, int OpportunityId, string University, string DisplayName,
+    Dictionary<string, string?> Fields, string? SourceUrl, string Note, string Status,
+    string? ReviewerNote, DateTimeOffset CreatedAt, DateTimeOffset? ReviewedAt);
+record SaveOpportunityQuestionRequest(string? Content);
+record SaveOpportunityAnswerRequest(string? Content, string? ExperienceType);
+record OpportunityAnswerResponse(int Id, string DisplayName, string ExperienceType, string Content, DateTimeOffset CreatedAt);
+record OpportunityQuestionResponse(int Id, string DisplayName, string Content, DateTimeOffset CreatedAt,
+    OpportunityAnswerResponse[] Answers);
 record StartConversationRequest(int RecipientUserId, int OpportunityId, string? Intake);
 record SendMessageRequest(string? Content);
 record MessageResponse(int Id, int SenderUserId, string Content, DateTimeOffset CreatedAt);
 record MessagePreview(string Content, DateTimeOffset CreatedAt);
 record ConversationSummaryResponse(int Id, int OtherUserId, string OtherDisplayName, string? OtherHomeUniversity,
     string? OtherProfilePhotoDataUrl, string University, string Intake, string? LastMessage,
-    DateTimeOffset? LastMessageAt, DateTimeOffset CreatedAt);
+    DateTimeOffset? LastMessageAt, DateTimeOffset CreatedAt, int UnreadCount = 0, bool IsBlocked = false);
 
 record StudentProfile(
     string? HomeUniversity,
@@ -1152,8 +1840,11 @@ record StudentProfile(
     string[]? Dislikes,
     double? Budget);
 
-record MatchResult(ErasmusOpportunity Opportunity, int Score, string[] Reasons, MatchFactor[] Breakdown);
+record MatchResult(ErasmusOpportunity Opportunity, int Score, string[] Reasons, MatchFactor[] Breakdown,
+    EligibilityAssessment Eligibility);
 record MatchFactor(string Name, int Points, int MaxPoints);
+record EligibilityAssessment(bool MeetsPublishedRequirements, bool HasEnoughProfileData, bool AgreementVerified,
+    string[] Reasons);
 
 record ErasmusOpportunity(
     int Id,

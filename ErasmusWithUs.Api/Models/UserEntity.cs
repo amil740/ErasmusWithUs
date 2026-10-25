@@ -19,6 +19,7 @@ public sealed class UserEntity
     public string? Intake { get; set; }
     public string? Bio { get; set; }
     public bool CommunityVisible { get; set; }
+    public bool RoommateSearch { get; set; }
     public string? ProfilePhotoDataUrl { get; set; }
     public string PreferredCountriesJson { get; set; } = "[]";
     public string LanguagesJson { get; set; } = "[]";
