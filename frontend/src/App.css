@@ -2796,7 +2796,8 @@ h1 em {
 }
 
 .catalog-caution {
-  margin: 10px 0;
+  display: block;
+  margin: 14px 0 0;
   padding: 8px 10px;
   border: 1px solid rgba(190, 128, 35, 0.25);
   border-radius: 9px;
@@ -2871,7 +2872,8 @@ html[data-theme='dark'] .assistant-next-step {
 }
 
 .university-card-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
 }
@@ -2902,15 +2904,20 @@ html[data-theme='dark'] .assistant-next-step {
 .university-peer-link {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   flex: 0 0 auto;
+  min-width: 174px;
+  min-height: 42px;
   border: 1px solid rgba(13, 106, 104, 0.15);
   border-radius: 10px;
   background: rgba(13, 106, 104, 0.06);
   padding: 9px 10px;
-  color: var(--teal);
+  color: #fff !important;
   font-size: 9px;
   font-weight: 700;
+  white-space: nowrap;
+  text-align: center;
 }
 
 .university-fields {
@@ -2959,7 +2966,10 @@ html[data-theme='dark'] .assistant-next-step {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 12px;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 
 .university-card-actions .text-button {
@@ -4965,7 +4975,7 @@ html[data-theme='dark'] .student-label { background: rgba(99,193,179,.14); color
   .university-guide-stats { width: 100%; }
   .university-toolbar { grid-template-columns: minmax(0,1fr); }
   .university-card { min-width: 0; padding: 14px; }
-  .university-card-head { grid-template-columns: 38px minmax(0,1fr); gap: 10px; }
+  .university-card-head { grid-template-columns: 56px minmax(0,1fr); gap: 10px; }
   .university-card-title { min-width: 0; }
   .university-peer-link { grid-column: 1 / -1; width: 100%; justify-content: center; }
   .university-facts { grid-template-columns: repeat(2,minmax(0,1fr)); }

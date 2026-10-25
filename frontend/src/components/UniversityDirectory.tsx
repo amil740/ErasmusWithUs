@@ -113,9 +113,9 @@ export default function UniversityDirectory({ opportunities, reminders, onToggle
           <div className="university-card-title"><span className={'verification ' + (item.verificationStatus === 'Verified' ? 'verified' : 'review')}><span />{t(item.verificationStatus === 'Verified' ? 'Source reviewed' : 'Needs review')}</span>
             <h3>{item.university}</h3><span className="location"><MapPin size={14} />{item.city}, {t(item.country)}</span>
           </div>
-          {item.verificationStatus !== 'Verified' && <div className="catalog-caution">{t('Planning data only: verify GPA, grant, deadline, and course availability with the official source and your coordinator.')}</div>}
           <button className="university-peer-link" onClick={() => onFindPeers(item.id)}><Users size={16} /> {t('Find future students')}</button>
         </div>
+        {item.verificationStatus !== 'Verified' && <div className="catalog-caution">{t('Planning data only: verify GPA, grant, deadline, and course availability with the official source and your coordinator.')}</div>}
         <div className="university-fields">{item.studyFields.map((field) => <span key={field}>{t(field)}</span>)}</div>
         <div className="university-facts">
           <div><small>{t('DEGREE LEVELS')}</small><strong>{item.levels.map(t).join(' · ')}</strong></div>
