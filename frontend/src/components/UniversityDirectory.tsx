@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { ArrowUpRight, Bell, ChevronDown, ExternalLink, MapPin, Search, Users } from 'lucide-react'
 import { getPendingCatalogCorrections, reviewCatalogCorrection, submitCatalogCorrection } from '../lib/api'
 import type { CatalogCorrection, DeadlineReminder, ErasmusOpportunity, User } from '../types/erasmus'
-import { usePreferences } from '../preferences'
+import { getLanguageLocale, usePreferences } from '../preferences'
 import FeaturedCampuses from './FeaturedCampuses'
 import UniversityPhoto from './UniversityPhoto'
 
@@ -122,7 +122,7 @@ export default function UniversityDirectory({ opportunities, reminders, onToggle
           <div><small>{t('MINIMUM GPA')}</small><strong>{item.minimumGpa.toFixed(1)}</strong></div>
           <div><small>{t('GRANT / MONTH')}</small><strong>€{item.monthlyGrant}</strong></div>
           <div><small>{t('EST. MONTHLY COST')}</small><strong>€{item.studentBudgetEstimate}</strong></div>
-          <div><small>{t('APPLICATION DEADLINE')}</small><strong>{new Date(item.deadline).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</strong></div>
+          <div><small>{t('APPLICATION DEADLINE')}</small><strong>{new Date(item.deadline).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</strong></div>
         </div>
         <div className="university-card-actions">
           <button type="button" className="text-button" onClick={() => setExpandedId(expanded ? null : item.id)}>{t(expanded ? 'Hide university guide' : 'University guide')}<ChevronDown size={15} className={expanded ? 'rotated' : ''} /></button>
@@ -147,7 +147,7 @@ export default function UniversityDirectory({ opportunities, reminders, onToggle
             {correctionNotice && <p className="inline-success" role="status">{t(correctionNotice)}</p>}
           </div>
           <div><strong>{t('Housing links')}</strong><div className="housing-links">{item.accommodationLinks.map((link) => <a key={link.name} href={link.url} target="_blank" rel="noreferrer"><span>{link.name}</span><small>{link.note}</small><ExternalLink size={13} /></a>)}</div></div>
-          <small className="university-reviewed">{t('Source review date:')} {new Date(item.lastVerifiedAt).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}. {t('Estimates are for planning and may change.')}</small>
+          <small className="university-reviewed">{t('Source review date:')} {new Date(item.lastVerifiedAt).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}. {t('Estimates are for planning and may change.')}</small>
         </div>}
       </article>
     })}</div>

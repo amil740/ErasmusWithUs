@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ArrowUpRight, Bell, CalendarDays, Calculator, Check, ClipboardList, MessageSquareQuote, Plus, Star } from 'lucide-react'
 import { answerOpportunityQuestion, askOpportunityQuestion, createStudentPlan, getOpportunityQuestions, getStudentPlans, getStudentExperiences, saveStudentExperience, updateStudentPlan } from '../lib/api'
 import type { DeadlineReminder, ErasmusOpportunity, ExperienceSummary, OpportunityQuestion, StudentPlan, User } from '../types/erasmus'
-import { usePreferences } from '../preferences'
+import { getLanguageLocale, usePreferences } from '../preferences'
 
 export function ComparePanel({ opportunities, onBrowse }: { opportunities: ErasmusOpportunity[]; onBrowse: () => void }) {
   const { t, language } = usePreferences()
@@ -23,9 +23,9 @@ export function ComparePanel({ opportunities, onBrowse }: { opportunities: Erasm
           <tr><th scope="row">{t('Estimated monthly cost')}</th>{compared.map((item) => <td key={item.id}>EUR {item.studentBudgetEstimate}</td>)}</tr>
           <tr><th scope="row">{t('Study fields')}</th>{compared.map((item) => <td key={item.id}>{item.studyFields.map(t).join(', ')}</td>)}</tr>
           <tr><th scope="row">{t('Teaching languages')}</th>{compared.map((item) => <td key={item.id}>{item.languages.map(t).join(', ')}</td>)}</tr>
-          <tr><th scope="row">{t('Deadline')}</th>{compared.map((item) => <td key={item.id}>{new Date(item.deadline).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</td>)}</tr>
+          <tr><th scope="row">{t('Deadline')}</th>{compared.map((item) => <td key={item.id}>{new Date(item.deadline).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</td>)}</tr>
           <tr><th scope="row">{t('Source status')}</th>{compared.map((item) => <td key={item.id}>{t(item.verificationStatus === 'Verified' ? 'Verified' : 'Needs review')}</td>)}</tr>
-          <tr><th scope="row">{t('Last checked')}</th>{compared.map((item) => <td key={item.id}>{new Date(item.lastVerifiedAt).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</td>)}</tr>
+          <tr><th scope="row">{t('Last checked')}</th>{compared.map((item) => <td key={item.id}>{new Date(item.lastVerifiedAt).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</td>)}</tr>
         </tbody>
       </table>
     </div>}
@@ -115,7 +115,7 @@ export function PlannerPanel({ opportunities, user, onSignIn }: {
         <div className="tracker-card-head"><div><strong>{plan.university}</strong><small>{destination ? `${destination.city}, ${destination.country}` : ''} · {t(plan.intake)}</small></div><label>{t('Application stage')}<select value={plan.stage || 'Considering'} disabled={busyPlanId === plan.id} onChange={(event) => { void savePlan(plan, { stage: event.target.value }) }}>{trackerStages.map((stage) => <option key={stage} value={stage}>{t(stage)}</option>)}</select></label></div>
         <div className="tracker-progress"><div><span>{t('Checklist progress')}</span><strong>{completed.size}/{trackerTasks.length}</strong></div><i><b style={{ width: `${progress}%` }} /></i></div>
         <div className="tracker-tasks">{trackerTasks.map((task) => <label className="tracker-task" key={task}><input type="checkbox" checked={completed.has(task)} disabled={busyPlanId === plan.id} onChange={(event) => { const next = event.target.checked ? [...completed, task] : [...completed].filter((item) => item !== task); void savePlan(plan, { completedTasks: next }) }} /><span>{t(task)}</span><Check size={14} /></label>)}</div>
-        <small className="tracker-updated">{t('Last saved')} · {new Date(plan.updatedAt || plan.createdAt).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB')}</small>
+        <small className="tracker-updated">{t('Last saved')} · {new Date(plan.updatedAt || plan.createdAt).toLocaleDateString(getLanguageLocale(language))}</small>
       </article>
     })}</div>}
   </section>
@@ -148,7 +148,7 @@ export function DeadlineRemindersPanel({ reminders, user, onRemove, onSignIn }: 
   }
   return <section className="workspace-panel reminders-page">
     <div className="reminders-heading"><div><span className="section-kicker">{t('DEADLINE REMINDERS')}</span><h2>{t('Stay ahead of application dates.')}</h2><p>{t('Choose a reminder from any destination card. We email you once before its listed deadline.')}</p></div>{reminders.length > 0 && <button className="secondary-button" type="button" onClick={exportCalendar}><CalendarDays size={16} />{t('Export calendar')}</button>}</div>
-    {!user?.emailVerified ? <div className="reminders-empty"><p>{t('Sign in and verify your email to save email reminders.')}</p><button className="primary-button" onClick={onSignIn}>{t('Sign in or create an account')} <ArrowUpRight size={15} /></button></div> : reminders.length === 0 ? <div className="reminders-empty"><p>{t('You have no active reminders yet.')}</p><small>{t('Open a destination card, expand its guide, then choose “Remind me”.')}</small></div> : <div className="reminder-list">{reminders.map((item) => <article className="reminder-item" key={item.id}><div className="reminder-icon"><Bell size={18} /></div><div><strong>{item.university}</strong><small>{t('Deadline')} · {new Date(item.deadline).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC' })}</small><span>{t('Email me {days} days before').replace('{days}', String(item.daysBefore))}{item.sentAt ? ` · ${t('Email sent')}` : ''}</span></div><button className="text-button" onClick={() => onRemove(item.id)}>{t('Remove')}</button></article>)}</div>}
+    {!user?.emailVerified ? <div className="reminders-empty"><p>{t('Sign in and verify your email to save email reminders.')}</p><button className="primary-button" onClick={onSignIn}>{t('Sign in or create an account')} <ArrowUpRight size={15} /></button></div> : reminders.length === 0 ? <div className="reminders-empty"><p>{t('You have no active reminders yet.')}</p><small>{t('Open a destination card, expand its guide, then choose “Remind me”.')}</small></div> : <div className="reminder-list">{reminders.map((item) => <article className="reminder-item" key={item.id}><div className="reminder-icon"><Bell size={18} /></div><div><strong>{item.university}</strong><small>{t('Deadline')} · {new Date(item.deadline).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC' })}</small><span>{t('Email me {days} days before').replace('{days}', String(item.daysBefore))}{item.sentAt ? ` · ${t('Email sent')}` : ''}</span></div><button className="text-button" onClick={() => onRemove(item.id)}>{t('Remove')}</button></article>)}</div>}
     <p className="reminder-note">{t('Deadlines may change. Confirm the current application date with the university and your home coordinator.')}</p>
   </section>
 }

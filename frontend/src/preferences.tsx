@@ -1,7 +1,29 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
-export type Language = 'en' | 'az'
+export type Language = 'en' | 'es' | 'de' | 'fr' | 'pt' | 'it' | 'zh' | 'ar'
 export type Theme = 'light' | 'dark'
+
+export const interfaceLanguages: Array<{ code: Language; label: string }> = [
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Español' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'fr', label: 'Français' },
+  { code: 'pt', label: 'Português' },
+  { code: 'it', label: 'Italiano' },
+  { code: 'zh', label: '中文' },
+  { code: 'ar', label: 'العربية' },
+]
+
+export function getLanguageLocale(language: Language) {
+  return language === 'es' ? 'es-ES'
+    : language === 'de' ? 'de-DE'
+      : language === 'fr' ? 'fr-FR'
+        : language === 'pt' ? 'pt-PT'
+          : language === 'it' ? 'it-IT'
+            : language === 'zh' ? 'zh-CN'
+              : language === 'ar' ? 'ar-SA'
+                : 'en-GB'
+}
 
 const translations: Record<string, string> = {
   'Workspace': 'İş sahəsi', 'Your journey': 'Səyahətiniz', 'Profile progress': 'Profilin tamamlanması',
@@ -326,6 +348,7 @@ const translations: Record<string, string> = {
 }
 
 function translateText(language: Language, text: string) {
+  if (language !== 'en') return text
   if (language === 'en') return text
   const direct = translations[text]
   if (direct) return direct
@@ -369,7 +392,7 @@ function readChoice<T extends string>(key: string, allowed: readonly T[], fallba
 }
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguage] = useState<Language>(() => readChoice('erasmuswithus.language', ['en', 'az'], 'en'))
+  const [language, setLanguage] = useState<Language>(() => readChoice('erasmuswithus.language', interfaceLanguages.map(({ code }) => code), 'en'))
   const [theme, setTheme] = useState<Theme>(() => readChoice('erasmuswithus.theme', ['light', 'dark'], 'light'))
   useEffect(() => {
     document.documentElement.lang = language

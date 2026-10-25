@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Bell, Bookmark, ChevronDown, ExternalLink, MapPin } from 'lucide-react'
 import type { DeadlineReminder, ErasmusOpportunity } from '../types/erasmus'
-import { usePreferences } from '../preferences'
+import { getLanguageLocale, usePreferences } from '../preferences'
 
 export default function OpportunityCard({ opportunity, saved, onSave, reminder, onToggleReminder, canSetReminder }: {
   opportunity: ErasmusOpportunity
@@ -31,7 +31,7 @@ export default function OpportunityCard({ opportunity, saved, onSave, reminder, 
     <div className="card-details">
       <div><small>{t('MIN. GPA')}</small><strong>{opportunity.minimumGpa.toFixed(1)}</strong></div>
       <div><small>{t('GRANT / MONTH')}</small><strong>EUR {opportunity.monthlyGrant}</strong></div>
-      <div><small>{t('DEADLINE')}</small><strong>{new Date(opportunity.deadline).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</strong></div>
+      <div><small>{t('DEADLINE')}</small><strong>{new Date(opportunity.deadline).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</strong></div>
     </div>
     <div className="cost-snapshot">
       <div><span>{t('EST. MONTHLY TOTAL')}</span><strong>EUR {opportunity.studentBudgetEstimate}</strong><small>{t('Rent + basics')}</small></div>
@@ -52,7 +52,7 @@ export default function OpportunityCard({ opportunity, saved, onSave, reminder, 
     </div>}
     <div className="source-footer">
       <a className="source-link" href={opportunity.sourceUrl} target="_blank" rel="noreferrer">{t('View university source')} <ExternalLink size={13} /></a>
-      <small>{t('Last checked')} {new Date(opportunity.lastVerifiedAt).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</small>
+      <small>{t('Last checked')} {new Date(opportunity.lastVerifiedAt).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</small>
     </div>
   </article>
 }

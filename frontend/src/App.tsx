@@ -8,7 +8,7 @@ import CommunityPanel from './components/CommunityPanel'
 import OpportunityCard from './components/OpportunityCard'
 import { BudgetPlannerPanel, ComparePanel, DeadlineRemindersPanel, PlannerPanel, StudentStoriesPanel } from './components/WorkspacePanels'
 import UniversityDirectory from './components/UniversityDirectory'
-import { usePreferences } from './preferences'
+import { getLanguageLocale, interfaceLanguages, usePreferences } from './preferences'
 import {
   getCurrentUser,
   getConversations,
@@ -577,7 +577,7 @@ function App() {
       if (!profileWasPersisted) {
         throw new Error('The server returned the old profile after saving. Your changes were not confirmed; please try again.')
       }
-      setSettingsMessage('Account settings saved successfully.')
+      setShowAccountSettings(false)
     } catch (requestError) {
       setSettingsMessage(requestError instanceof Error ? requestError.message : 'Could not save your settings.')
     } finally {
@@ -761,7 +761,7 @@ function App() {
           <button className="mobile-menu" aria-label={t(mobileMenuOpen ? 'Close menu' : 'Open menu')} onClick={() => setMobileMenuOpen((previous) => !previous)}><Menu size={20} /></button>
           <div className="breadcrumb">ErasmusWithUs <span>/</span> <strong>{t(activeNav)}</strong></div>
           <div className="top-actions">
-            <label className="language-control" aria-label={t('Language')}><Languages size={16} /><select value={language} onChange={(event) => setLanguage(event.target.value as typeof language)} aria-label={t('Language')}><option value="en">EN</option><option value="az">AZ</option></select></label>
+            <label className="language-control" aria-label={t('Language')}><Languages size={16} /><select value={language} onChange={(event) => setLanguage(event.target.value as typeof language)} aria-label={t('Language')}>{interfaceLanguages.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></label>
             <button className="icon-button theme-toggle" type="button" aria-label={t(theme === 'dark' ? 'Light mode' : 'Dark mode')} title={t(theme === 'dark' ? 'Light mode' : 'Dark mode')} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>
             <button className="icon-button message-shortcut" type="button" aria-label={t('Open messages')} title={t('Open messages')} onClick={() => handleNav('Community')}><MessageCircle size={18} />{unreadCount > 0 && <b>{unreadCount > 99 ? '99+' : unreadCount}</b>}</button>
             <button className="icon-button" aria-label={t('Open shortlist')} onClick={() => handleNav('Shortlist')}><Heart size={18} /></button>
@@ -933,7 +933,7 @@ function App() {
                 {checks.map((reason) => <small key={reason}>{t(reason)}</small>)}
                 <small><b>{t('Your next step')}:</b> {t(nextStep)}</small>
                 <small>{t('The bilateral agreement and nomination must still be confirmed by your home university.')}</small>
-                <small>{t('Source status')}: {t(match.opportunity.verificationStatus === 'Verified' ? 'Verified' : 'Needs review')} · {t('Last checked')} {new Date(match.opportunity.lastVerifiedAt).toLocaleDateString(language === 'az' ? 'az-AZ' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</small>
+                <small>{t('Source status')}: {t(match.opportunity.verificationStatus === 'Verified' ? 'Verified' : 'Needs review')} · {t('Last checked')} {new Date(match.opportunity.lastVerifiedAt).toLocaleDateString(getLanguageLocale(language), { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</small>
               </div>
               <a className="source-link match-source-link" href={match.opportunity.sourceUrl} target="_blank" rel="noreferrer">{t('View university source')} <ArrowUpRight size={13} /></a>
             </div>
