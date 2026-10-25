@@ -25,6 +25,76 @@ export function getLanguageLocale(language: Language) {
                 : 'en-GB'
 }
 
+const localizedTranslations: Partial<Record<Language, Record<string, string>>> = {
+  it: {
+    'Workspace': 'Area di lavoro', 'Your journey': 'Il tuo percorso', 'Discover': 'Esplora',
+    'Universities': 'Università', 'Find my match': 'Trova la mia compatibilità', 'Community': 'Comunità',
+    'Compare': 'Confronta', 'Shortlist': 'Preferiti', 'Planner': 'Pianificatore', 'My account': 'Il mio account',
+    'Sign in': 'Accedi', 'Account settings': 'Impostazioni account', 'Close': 'Chiudi',
+    'Explore universities': 'Esplora le università', 'Browse universities': 'Sfoglia le università',
+    'Matching...': 'Ricerca compatibilità...', 'Loading destinations...': 'Caricamento destinazioni...',
+    'Search university, city, or subject...': 'Cerca università, città o materia...',
+    'Filters': 'Filtri', 'Recommended': 'Consigliati', 'Clear filters': 'Cancella filtri',
+    'Country': 'Paese', 'All countries': 'Tutti i paesi', 'Degree level': 'Livello di studio',
+    'All levels': 'Tutti i livelli', 'Study field': 'Area di studio', 'Teaching language': 'Lingua di insegnamento',
+    'All languages': 'Tutte le lingue', 'Find best fit': 'Trova la scelta migliore',
+    'Tell us what suits you.': 'Dicci cosa fa per te.', 'Home country': 'Paese di origine',
+    'Select country': 'Seleziona il paese', 'GPA': 'Media GPA', 'Monthly budget (EUR)': 'Budget mensile (EUR)',
+    'Preferred countries': 'Paesi preferiti', 'Languages': 'Lingue', 'What you like': 'Cosa ti piace',
+    'What you dislike': 'Cosa non ti piace', 'Save match': 'Salva compatibilità',
+    'Save my Erasmus profile': 'Salva il mio profilo Erasmus', 'Saving…': 'Salvataggio…',
+    'Your account, built around your exchange.': 'Il tuo account, costruito sul tuo scambio.',
+    'About you': 'Su di te', 'Display name': 'Nome visualizzato', 'Home university': 'Università di origine',
+    'Current GPA': 'GPA attuale', 'Planned Erasmus intake': 'Periodo Erasmus previsto',
+    'Short introduction': 'Breve presentazione', 'Profile photo': 'Foto del profilo',
+    'Choose photo': 'Scegli foto', 'Remove': 'Rimuovi',
+    'Save to shortlist': 'Salva nei preferiti', 'Remove from shortlist': 'Rimuovi dai preferiti',
+    'No destinations found': 'Nessuna destinazione trovata', 'Your shortlist is empty': 'La tua lista è vuota',
+    'Start with these.': 'Inizia da questi.', 'YOUR MATCH RESULTS': 'I TUOI RISULTATI',
+    'The score explains fit, not eligibility. Your home university coordinator must confirm the bilateral agreement and nomination.':
+      'Il punteggio indica la compatibilità, non l idoneità. Il coordinatore della tua università deve confermare l accordo e la nomina.',
+    'Source status': 'Stato della fonte', 'Verified': 'Verificato', 'Needs review': 'Da verificare',
+    'Last checked': 'Ultimo controllo', 'View university source': 'Vedi la fonte dell università',
+    'Profile progress': 'Completamento del profilo', 'Improve profile': 'Migliora il profilo',
+    'Guest explorer': 'Esploratore ospite', 'Complete your profile': 'Completa il tuo profilo',
+    'Open shortlist': 'Apri i preferiti', 'Close menu': 'Chiudi menu', 'Open menu': 'Apri menu',
+  },
+  es: {
+    'Discover': 'Explorar', 'Universities': 'Universidades', 'Find my match': 'Encuentra mi opción',
+    'Community': 'Comunidad', 'Compare': 'Comparar', 'Shortlist': 'Favoritos', 'Planner': 'Planificador',
+    'My account': 'Mi cuenta', 'Sign in': 'Iniciar sesión', 'Account settings': 'Configuración de la cuenta',
+    'Close': 'Cerrar', 'Explore universities': 'Explorar universidades', 'Filters': 'Filtros',
+    'Country': 'País', 'All countries': 'Todos los países', 'Degree level': 'Nivel de estudios',
+    'Study field': 'Área de estudio', 'Teaching language': 'Idioma de enseñanza',
+    'All languages': 'Todos los idiomas', 'Find best fit': 'Encontrar la mejor opción',
+    'Tell us what suits you.': 'Cuéntanos qué te conviene.', 'Home country': 'País de origen',
+    'Select country': 'Selecciona un país', 'Monthly budget (EUR)': 'Presupuesto mensual (EUR)',
+    'Preferred countries': 'Países preferidos', 'Languages': 'Idiomas', 'What you like': 'Lo que te gusta',
+    'What you dislike': 'Lo que no te gusta', 'Save my Erasmus profile': 'Guardar mi perfil Erasmus',
+    'Saving…': 'Guardando…', 'Save match': 'Guardar coincidencia', 'Remove': 'Eliminar',
+  },
+  de: {
+    'Discover': 'Entdecken', 'Universities': 'Universitäten', 'Find my match': 'Meine passende Option',
+    'Community': 'Gemeinschaft', 'Compare': 'Vergleichen', 'Shortlist': 'Favoriten', 'Planner': 'Planer',
+    'My account': 'Mein Konto', 'Sign in': 'Anmelden', 'Account settings': 'Kontoeinstellungen',
+    'Close': 'Schließen', 'Filters': 'Filter', 'Country': 'Land', 'All countries': 'Alle Länder',
+    'Degree level': 'Studienniveau', 'Study field': 'Studienfach', 'Teaching language': 'Unterrichtssprache',
+    'All languages': 'Alle Sprachen', 'Find best fit': 'Beste Option finden', 'Home country': 'Heimatland',
+    'Select country': 'Land auswählen', 'Languages': 'Sprachen', 'Remove': 'Entfernen',
+    'Save my Erasmus profile': 'Mein Erasmus-Profil speichern', 'Saving…': 'Wird gespeichert…',
+  },
+  fr: {
+    'Discover': 'Explorer', 'Universities': 'Universités', 'Find my match': 'Trouver mon échange',
+    'Community': 'Communauté', 'Compare': 'Comparer', 'Shortlist': 'Favoris', 'Planner': 'Planificateur',
+    'My account': 'Mon compte', 'Sign in': 'Se connecter', 'Account settings': 'Paramètres du compte',
+    'Close': 'Fermer', 'Filters': 'Filtres', 'Country': 'Pays', 'All countries': 'Tous les pays',
+    'Degree level': 'Niveau d études', 'Study field': 'Domaine d études', 'Teaching language': 'Langue d enseignement',
+    'All languages': 'Toutes les langues', 'Find best fit': 'Trouver la meilleure option',
+    'Home country': 'Pays d origine', 'Select country': 'Sélectionner un pays', 'Languages': 'Langues',
+    'Remove': 'Supprimer', 'Save my Erasmus profile': 'Enregistrer mon profil Erasmus', 'Saving…': 'Enregistrement…',
+  },
+}
+
 const translations: Record<string, string> = {
   'Workspace': 'İş sahəsi', 'Your journey': 'Səyahətiniz', 'Profile progress': 'Profilin tamamlanması',
   'Your Erasmus profile is ready.': 'Erasmus profiliniz hazırdır.',
@@ -348,6 +418,8 @@ const translations: Record<string, string> = {
 }
 
 function translateText(language: Language, text: string) {
+  const localized = localizedTranslations[language]?.[text]
+  if (localized) return localized
   if (language !== 'en') return text
   if (language === 'en') return text
   const direct = translations[text]
